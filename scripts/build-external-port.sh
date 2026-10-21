@@ -23,7 +23,8 @@ plutil -lint "$task_app_path/Info.plist" apps/ExternalPort/Entitlements.plist
 codesign --force --sign - --timestamp=none --pagesize 4096 --generate-entitlement-der \
   --entitlements apps/ExternalPort/Entitlements.plist "$task_app_path"
 codesign --verify --strict --verbose=2 "$task_app_path" 2>&1 | tee out/external-signature.txt
-codesign -d --entitlements - "$task_app_path/NSPExternal" > out/external-entitlements.plist
+codesign -d --entitlements :- "$task_app_path/NSPExternal" > out/external-entitlements.plist
+plutil -lint out/external-entitlements.plist
 xcrun lipo "$task_app_path/NSPExternal" -verify_arch arm64
 xcrun otool -L "$task_app_path/NSPExternal" | tee out/external-dependencies.txt
 xcrun nm -u "$task_app_path/NSPExternal" | tee out/external-imports.txt
