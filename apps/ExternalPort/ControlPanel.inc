@@ -156,6 +156,15 @@ static UIColor *NSPCardColor(void) {return [UIColor colorWithRed:0.075 green:0.1
     else [self overviewPage];
     [self.scroll setContentOffset:CGPointZero animated:NO];[self refresh];
 }
+#ifdef NSP_UI_PREVIEW
+- (void)viewDidAppear:(BOOL)animated {
+    [super viewDidAppear:animated];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC/2),dispatch_get_main_queue(),^{
+        [self.view layoutIfNeeded];
+        NSPWriteJSON(@"ui-ready.json",@{@"page":@(self.pages.selectedSegmentIndex),@"time":@(NSDate.date.timeIntervalSince1970)});
+    });
+}
+#endif
 - (void)pageChanged:(UISegmentedControl *)sender {(void)sender;[self renderPage];}
 - (void)overviewPage {
     UIStackView *hero=[self vertical:6];hero.layoutMargins=UIEdgeInsetsMake(8,2,10,2);hero.layoutMarginsRelativeArrangement=YES;
