@@ -37,6 +37,13 @@ std::u16string playerName(const Memory &m, uint64_t actor) {
     if (value.find(u'\0')!=std::u16string::npos) return {};
     return value;
 }
+bool readCamera(const Memory &m,uint64_t object,Camera &out) {
+    if (!m.get(object+0x15e0,out.position) || !m.get(object+0x1bac,out.rotation) ||
+        !m.get(object+0x1bc0,out.fov)) return false;
+    float overrideFov{};
+    if (m.get(object+0xef4,overrideFov) && overrideFov>0) out.fov=overrideFov;
+    return finite(out.position) && finite(out.rotation) && std::isfinite(out.fov) && out.fov>1 && out.fov<179;
+}
 } // namespace
 
 bool Memory::bytes(uint64_t address, void *out, size_t size) const {
@@ -293,11 +300,7 @@ Snapshot Sampler::sample(const SampleOptions &options) {
         out.status="相机读取路径与样本不同，显示已停用";return out;
     }
     auto &c=out.camera;
-    if (!memory.get(out.cameraObject+0x15e0,c.position) || !memory.get(out.cameraObject+0x1bac,c.rotation) ||
-        !memory.get(out.cameraObject+0x1bc0,c.fov)) return out;
-    float overrideFov{};
-    if (memory.get(out.cameraObject+0xef4,overrideFov) && overrideFov>0) c.fov=overrideFov;
-    if (!finite(c.position) || !finite(c.rotation) || !std::isfinite(c.fov) || c.fov<=1 || c.fov>=179) {
+    if (!readCamera(memory,out.cameraObject,c)) {
         out.status="相机数据未通过校验";return out;
     }
     out.cameraReady=true; out.status="只读采样中（角色包含队友）";
@@ -328,6 +331,9 @@ Snapshot Sampler::sample(const SampleOptions &options) {
         } else {it=candidates.erase(it);continue;}
         ++it;
     }
+    // Keep projection aligned with the latest view after potentially expensive discovery/details.
+    Camera latest{};
+    if (readCamera(memory,out.cameraObject,latest)) out.camera=latest;
     return out;
 }
 } // namespace nsport

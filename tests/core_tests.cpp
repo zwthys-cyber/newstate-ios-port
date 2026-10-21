@@ -5,15 +5,18 @@
 #include <iostream>
 #include <map>
 #include <vector>
+#include <functional>
 
 using namespace nsport;
 struct Fake {
     std::map<uint64_t,std::vector<uint8_t>> regions;
     size_t reads{};
+    std::function<void(uint64_t,size_t)> beforeRead;
     void allocate(uint64_t a,size_t n) {regions[a]=std::vector<uint8_t>(n);}
     static bool read(void *ctx,uint64_t a,void *out,size_t n) {
         Fake &self=*static_cast<Fake *>(ctx);
         ++self.reads;
+        if (self.beforeRead) self.beforeRead(a,n);
         auto it=self.regions.upper_bound(a);
         if (it==self.regions.begin()) return false;
         --it;
@@ -148,11 +151,16 @@ static void completeReadPipeline() {
     // Fast samples retain labels but read fresh position/camera and reject destroyed objects.
     size_t slowReads=f.reads;
     SampleOptions fast;fast.details=false;fast.discoveryBudget=0;fast.kinds=1;
-    f.set(root+0x150,Vec3{2000,100,0});f.set(camera+0x1bac,Vec3{0,90,0});
+    f.set(root+0x150,Vec3{2000,100,0});
+    // Rotate only after the initial camera read, while target positions are sampled.
+    f.beforeRead=[&](uint64_t address,size_t) {
+        if (address==root+0x150) f.set(camera+0x1bac,Vec3{0,90,0});
+    };
     size_t before=f.reads;auto moving=sampler.sample(fast);
     assert(moving.cameraReady && moving.markers.size()==1 && moving.markers[0].position.x==2000);
     assert(moving.camera.rotation.y==90 && moving.markers[0].playerName==u"测试Bot");
     assert(f.reads-before<slowReads);
+    f.beforeRead={};
     f.set(chunk+24+16,uint32_t(0x20000000));moving=sampler.sample(fast);assert(moving.markers.empty());
     f.set(chunk+24+16,uint32_t(0));f.set(root+0x150,Vec3{1000,100,0});f.set(camera+0x1bac,Vec3{0,0,0});
     out=sampler.sample();assert(out.markers.size()==1);
