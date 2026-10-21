@@ -17,7 +17,8 @@
 extern char **environ;
 static NSString *NSPFolder;
 static NSString *const NSPStop=@"org.newstateport.external.stop";
-static NSString *const NSPVersion=@"0.2.2";
+static NSString *const NSPVersion=@"0.2.3";
+static NSString *const NSPStorage=@"/var/mobile/Library/Application Support/org.newstateport.External";
 
 @interface UIApplication (NSPPrivate)
 - (void)_accessibilityInit;
@@ -87,6 +88,41 @@ static NSDictionary *NSPDefaults(void) {
     return @{@"sampling":@NO,@"characters":@YES,@"vehicles":@YES,@"items":@NO,
         @"boxes":@YES,@"lines":@NO,@"health":@YES,@"distances":@YES,@"names":@YES,
         @"crosshair":@YES,@"skeletons":@NO,@"orientation":@0};
+}
+static NSDictionary *NSPCheckSpawn(BOOL root) {
+    NSString *mode=root ? @"root" : @"mobile";
+    NSString *path=[NSBundle.mainBundle.bundlePath stringByAppendingPathComponent:@"NSPSpawnProbe"];
+    const char *args[]={path.fileSystemRepresentation,"--check",mode.UTF8String,NULL};
+    NSMutableDictionary *result=[NSMutableDictionary dictionary];
+    posix_spawnattr_t attributes;
+    int error=posix_spawnattr_init(&attributes);
+    if (error) return @{@"spawn_error":@(error),@"stage":@"probe_attributes"};
+    if (root) {
+        using Persona=int (*)(const posix_spawnattr_t *,uid_t,uint32_t);
+        using Identity=int (*)(const posix_spawnattr_t *,uid_t);
+        auto persona=reinterpret_cast<Persona>(dlsym(RTLD_DEFAULT,"posix_spawnattr_set_persona_np"));
+        auto uid=reinterpret_cast<Identity>(dlsym(RTLD_DEFAULT,"posix_spawnattr_set_persona_uid_np"));
+        auto gid=reinterpret_cast<Identity>(dlsym(RTLD_DEFAULT,"posix_spawnattr_set_persona_gid_np"));
+        error=(!persona || !uid || !gid) ? ENOSYS : persona(&attributes,99,1);
+        if (!error) error=uid(&attributes,0);
+        if (!error) error=gid(&attributes,0);
+    }
+    pid_t child=0;
+    if (!error) error=posix_spawn(&child,args[0],NULL,&attributes,const_cast<char **>(args),environ);
+    posix_spawnattr_destroy(&attributes);
+    result[@"spawn_error"]=@(error);result[@"pid"]=@(child);
+    if (!error) {
+        int status=0;pid_t reaped;
+        do {reaped=waitpid(child,&status,0);} while (reaped<0 && errno==EINTR);
+        if (reaped==child) {
+            result[@"wait_status"]=@(status);
+            if (WIFEXITED(status)) result[@"exit_code"]=@(WEXITSTATUS(status));
+            if (WIFSIGNALED(status)) result[@"exit_signal"]=@(WTERMSIG(status));
+            NSDictionary *entry=NSPReadJSON([NSString stringWithFormat:@"spawn-check-%@.json",mode]);
+            if ([entry[@"pid"] intValue]==child) result[@"entry"]=entry;
+        } else result[@"wait_error"]=@(errno);
+    }
+    return result;
 }
 static CGRect NSPScreenBounds(void) {
 #pragma clang diagnostic push
@@ -372,7 +408,24 @@ static void NSPStopCallback(CFNotificationCenterRef center,void *observer,CFStri
     posix_spawnattr_destroy(&attributes);
     if (rc) {
         NSPLaunchReport(stage,[NSString stringWithFormat:@"外置进程启动失败：%d（%s）；尚不能确定是权限问题",rc,strerror(rc)],rc,0,helperInfo);
-        [self refresh];return;
+        [self refresh];
+        if (rc==EPERM && [stage isEqualToString:@"posix_spawn"]) {
+            NSNumber *attempt=NSPReadJSON(@"launch.json")[@"time"];
+            dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
+                @autoreleasepool {
+                    NSDictionary *mobile=NSPCheckSpawn(NO);
+                    NSDictionary *root=NSPCheckSpawn(YES);
+                    dispatch_async(dispatch_get_main_queue(),^{
+                        NSMutableDictionary *launch=[NSPReadJSON(@"launch.json") mutableCopy];
+                        if ([launch[@"time"] isEqual:attempt]) {
+                            launch[@"spawn_probes"]=@{@"mobile":mobile,@"root":root};
+                            NSPWriteJSON(@"launch.json",launch);[self refresh];
+                        }
+                    });
+                }
+            });
+        }
+        return;
     }
     NSPLaunchReport(@"child_created",[NSString stringWithFormat:@"外置进程已创建：%d，等待悬浮层状态",child],0,child,helperInfo);
     [self refresh];
@@ -403,7 +456,7 @@ static void NSPStopCallback(CFNotificationCenterRef center,void *observer,CFStri
 }
 - (void)shareStatus {
     NSMutableArray *files=[NSMutableArray array];
-    for (NSString *name in @[@"status.json",@"settings.json",@"launch.json"]) {
+    for (NSString *name in @[@"status.json",@"settings.json",@"launch.json",@"spawn-check-mobile.json",@"spawn-check-root.json"]) {
         if ([NSFileManager.defaultManager fileExistsAtPath:NSPPath(name)]) [files addObject:[NSURL fileURLWithPath:NSPPath(name)]];
     }
     if (!files.count) {self.status.text=@"暂无状态文件可导出";return;}
@@ -459,13 +512,12 @@ int main(int argc,char *argv[]) {
 #ifdef NSP_HUD_HELPER
         if (argc==3 && !strcmp(argv[1],"--hud")) {
             NSPFolder=[NSString stringWithUTF8String:argv[2]];
-            if (!NSPFolder.length || (![NSPFolder hasPrefix:@"/var/mobile/Containers/Data/Application/"] &&
-                ![NSPFolder hasPrefix:@"/private/var/mobile/Containers/Data/Application/"])) return 5;
+            if (![NSPFolder isEqualToString:NSPStorage]) return 5;
             return NSPHUDMain();
         }
         return 6; // This executable is a HUD helper, not a second launcher app.
 #else
-        NSPFolder=[NSHomeDirectory() stringByAppendingPathComponent:@"Documents/NSPExternal"];
+        NSPFolder=NSPStorage;
         [NSFileManager.defaultManager createDirectoryAtPath:NSPFolder withIntermediateDirectories:YES attributes:nil error:nil];
         return UIApplicationMain(argc,argv,nil,NSStringFromClass(NSPAppDelegate.class));
 #endif
