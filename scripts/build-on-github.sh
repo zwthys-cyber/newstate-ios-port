@@ -17,7 +17,8 @@ xcrun --sdk iphoneos clang++ "${task_common[@]}" -dynamiclib build/PortCore.o bu
   -Wl,-install_name,@rpath/NewStatePort.dylib -Wl,-dead_strip -o out/NewStatePort.dylib
 codesign --force --sign - --timestamp=none out/NewStatePort.dylib
 codesign --verify --strict --verbose=2 out/NewStatePort.dylib 2>&1 | tee out/signature.txt
-xcrun lipo -verify_arch arm64 out/NewStatePort.dylib
+xcrun lipo out/NewStatePort.dylib -verify_arch arm64
+xcrun lipo -info out/NewStatePort.dylib | tee out/architecture.txt
 xcrun otool -L out/NewStatePort.dylib | tee out/dependencies.txt
 python3 scripts/verify_artifact.py out/NewStatePort.dylib | tee out/macho-verification.json
 python3 - <<'PY'
