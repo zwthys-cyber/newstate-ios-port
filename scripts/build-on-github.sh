@@ -35,6 +35,14 @@ cp out/NewStateLoadProbe.dylib out/NewStateLoadProbe-InjectorSign.dylib
 codesign --remove-signature out/NewStateLoadProbe-InjectorSign.dylib
 python3 scripts/verify_artifact.py out/NewStateLoadProbe-InjectorSign.dylib '@rpath/NewStateLoadProbe.dylib' --injector-sign | tee out/injector-sign-verification.json
 python3 tests/unsigned_probe_test.py out/NewStateLoadProbe.dylib out/NewStateLoadProbe-InjectorSign.dylib | tee out/injector-sign-regression.txt
+# Diagnose whether constructors and the main queue execute; sign on the injector.
+xcrun --sdk iphoneos clang -arch arm64 -isysroot "$task_sdk_path" -miphoneos-version-min=17.0 \
+  -std=c11 -fblocks -O2 -Wall -Wextra -Werror -fvisibility=hidden \
+  -dynamiclib src/StartupTrace.c -Wl,-install_name,@rpath/NewStateStartupTrace.dylib \
+  -o out/NewStateStartupTrace-InjectorSign.dylib
+codesign --remove-signature out/NewStateStartupTrace-InjectorSign.dylib
+python3 scripts/verify_artifact.py out/NewStateStartupTrace-InjectorSign.dylib '@rpath/NewStateStartupTrace.dylib' --injector-sign | tee out/startup-trace-verification.json
+xcrun nm -u out/NewStateStartupTrace-InjectorSign.dylib | tee out/startup-trace-imports.txt
 python3 - <<'PY'
 import json,os,pathlib,subprocess
 data={
@@ -47,6 +55,8 @@ data={
   'signature_page_size':4096,
   'injector_sign_variant':'NewStateLoadProbe-InjectorSign.dylib',
   'injector_sign_variant_on_device_tested':False,
+  'startup_trace_variant':'NewStateStartupTrace-InjectorSign.dylib',
+  'startup_trace_on_device_tested':False,
   'target_game_version':'0.9.98','target_game_build':'804',
   'on_device_tested':False,'gameplay_features_verified':False,
   'mode':'deferred-startup-read-only-overlay','engine_function_calls':False,'game_memory_writes':False
