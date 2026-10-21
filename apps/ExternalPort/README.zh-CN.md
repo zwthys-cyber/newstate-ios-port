@@ -1,6 +1,8 @@
-# NSP 外置显示 0.2.1
+# NSP 外置显示 0.2.2
 
-0.2.1 修复启动失败时仅能导出设置的问题：主界面负责写入 `launch.json`，记录启动阶段、原始错误码/文字、父进程 UID 和辅助进程退出码/信号。即使辅助进程未进入入口也有启动记录；首次打开会创建初始状态文件。此更新补齐诊断，不代表已修复设备上的权限或窗口问题。
+0.2.2 针对 0.2.1 在 `posix_spawn` 返回 `EPERM`、没有创建子进程的设备反馈：不再以 root 重启带应用容器声明的主程序，改用独立的无容器 `NSPExternalHUD`。控制界面保留自己的应用容器；任务读取和窗口权限仅授予 HUD，HUD 不再声明 persona 管理权限。该调整是启动路径修正，尚不能证明已解决设备上的 EPERM。
+
+`launch.json` 现在记录父进程运行时实际读取到的权限、系统版本、辅助程序存在性/文件权限/属主。HUD 入口检查实际 euid 为 0 才继续初始化，并报告 UID 和自己的运行时权限。日志只查询本工具自身权限，不枚举其他应用的权限。沿用 0.2.1 的持久化启动记录与错误码/退出原因导出。
 
 独立 IPA，通过 TrollStore 安装，目标 iPhone 15 Pro Max / iOS 17.0 / NEW STATE 0.9.98（804）。不修改游戏 IPA，不向游戏注入 dylib，不改写游戏内存。该版本是新的外置架构，尚未实机验证；编译成功不证明设备会授予读取权限，也不证明窗口在其他应用前台可见。
 
@@ -25,7 +27,7 @@
 
 HUD 的状态/准星会出现在其他应用之上，停止前会持续显示；玩家标记仅在读取成功且相机有效时绘制。方向选择为手动设置，当前未实现自动跟随游戏界面方向。跨应用窗口注册调用返回不等于设备实际显示成功，需要目视确认。
 
-状态数据位于本工具自身数据容器 `Documents/NSPExternal/`。导出只含版本、阶段、PID、UID、错误码、退出状态、计数及设置，不含账号、玩家姓名或坐标。HUD 在画面中显示姓名属于用户开启的显示功能，不进入导出文件。
+状态数据位于本工具自身数据容器 `Documents/NSPExternal/`。导出只含版本、阶段、PID、UID、自身权限查询、系统版本、辅助程序权限、错误码、退出状态、计数及设置，不含账号、玩家姓名或坐标。HUD 在画面中显示姓名属于用户开启的显示功能，不进入导出文件。
 
 ## 权限与来源
 
@@ -34,6 +36,7 @@ HUD 的状态/准星会出现在其他应用之上，停止前会持续显示；
 - Apple XNU iOS 17 task port conversion: https://github.com/apple-oss-distributions/xnu/blob/xnu-10002.1.13/osfmk/kern/ipc_tt.c
 - Apple task read port syscall: https://github.com/apple-oss-distributions/xnu/blob/xnu-10002.1.13/bsd/vm/vm_unix.c
 - TrollStore 对相关权限的开发者模式要求检查：https://github.com/opa334/TrollStore/blob/main/RootHelper/main.m
+- TrollStore 的应用容器与 root 辅助进程说明：https://github.com/opa334/TrollStore#unsandboxing
 - HUD 启动和窗口托管方式参考 Lessica/TrollSpeed（MIT）；完整许可见 ThirdPartyNotices.txt。
 
 没有实现内核修改、签名校验关闭或保护事件屏蔽。原版游戏可能拒绝某些环境或外部访问；本包不保证改变其安全判定。

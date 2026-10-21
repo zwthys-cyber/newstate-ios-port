@@ -7,6 +7,7 @@
 #include <dlfcn.h>
 #include <spawn.h>
 #include <sys/wait.h>
+#include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <cerrno>
@@ -16,7 +17,7 @@
 extern char **environ;
 static NSString *NSPFolder;
 static NSString *const NSPStop=@"org.newstateport.external.stop";
-static NSString *const NSPVersion=@"0.2.1";
+static NSString *const NSPVersion=@"0.2.2";
 
 @interface UIApplication (NSPPrivate)
 - (void)_accessibilityInit;
@@ -38,11 +39,35 @@ static void NSPWriteJSON(NSString *name,NSDictionary *object) {
     if (data && [data writeToFile:NSPPath(name) atomically:YES])
         [NSFileManager.defaultManager setAttributes:@{NSFilePosixPermissions:@0644} ofItemAtPath:NSPPath(name) error:nil];
 }
+static NSDictionary *NSPRuntimePermissions(void) {
+    using Create=CFTypeRef (*)(CFAllocatorRef);
+    using Copy=CFTypeRef (*)(CFTypeRef,CFStringRef,CFErrorRef *);
+    auto create=reinterpret_cast<Create>(dlsym(RTLD_DEFAULT,"SecTaskCreateFromSelf"));
+    auto copy=reinterpret_cast<Copy>(dlsym(RTLD_DEFAULT,"SecTaskCopyValueForEntitlement"));
+    NSMutableDictionary *values=[NSMutableDictionary dictionary];
+    CFTypeRef task=create ? create(kCFAllocatorDefault) : nullptr;
+    values[@"query_available"]=@(task && copy);
+    if (task && copy) {
+        for (NSString *key in @[@"platform-application",@"com.apple.private.persona-mgmt",
+            @"com.apple.private.security.no-sandbox",@"com.apple.private.security.no-container",
+            @"com.apple.private.security.container-required",@"com.apple.system-task-ports.read"]) {
+            CFErrorRef error=nullptr;
+            CFTypeRef value=copy(task,(__bridge CFStringRef)key,&error);
+            if (value) {
+                id object=CFBridgingRelease(value);
+                if ([object isKindOfClass:NSNumber.class] || [object isKindOfClass:NSString.class]) values[key]=object;
+            }
+            if (error) CFRelease(error);
+        }
+    }
+    if (task) CFRelease(task);
+    return values;
+}
 static void NSPReport(NSString *status,NSDictionary *extra) {
     NSMutableDictionary *report=[@{@"version":NSPVersion,@"helper_pid":@(getpid()),
         @"time":@(NSDate.date.timeIntervalSince1970),@"status":status?:@"",
         @"read_only":@YES,@"game_files_modified":@NO,@"injection":@NO,
-        @"on_device_verified":@NO} mutableCopy];
+        @"on_device_verified":@NO,@"helper_uid":@(getuid()),@"helper_euid":@(geteuid())} mutableCopy];
     if (extra) [report addEntriesFromDictionary:extra];
     NSPWriteJSON(@"status.json",report);
 }
@@ -50,6 +75,8 @@ static void NSPLaunchReport(NSString *phase,NSString *message,int error,pid_t ch
     NSMutableDictionary *report=[@{@"version":NSPVersion,@"parent_pid":@(getpid()),
         @"parent_uid":@(getuid()),@"parent_euid":@(geteuid()),@"helper_pid":@(child),
         @"time":@(NSDate.date.timeIntervalSince1970),@"phase":phase,@"status":message,
+        @"runtime_entitlements":NSPRuntimePermissions(),
+        @"os":NSProcessInfo.processInfo.operatingSystemVersionString,
         @"error_code":@(error),@"error_text":error ? [NSString stringWithUTF8String:strerror(error)] : @""} mutableCopy];
     if (extra) [report addEntriesFromDictionary:extra];
     // The controller owns this file, so a child denied launch cannot suppress diagnostics.
@@ -333,16 +360,21 @@ static void NSPStopCallback(CFNotificationCenterRef center,void *observer,CFStri
     rc=persona(&attributes,99,1);
     if (!rc) {stage=@"persona_uid";rc=uid(&attributes,0);}
     if (!rc) {stage=@"persona_gid";rc=gid(&attributes,0);}
-    NSString *executable=NSBundle.mainBundle.executablePath;
+    NSString *executable=[NSBundle.mainBundle.bundlePath stringByAppendingPathComponent:@"NSPExternalHUD"];
+    struct stat executableInfo{};
+    errno=0;int statResult=stat(executable.fileSystemRepresentation,&executableInfo);int statError=errno;
+    NSDictionary *helperInfo=@{@"helper_exists":@(statResult==0),@"helper_stat_error":@(statResult ? statError : 0),
+        @"helper_mode":@(statResult ? 0 : executableInfo.st_mode & 07777),
+        @"helper_owner":@(statResult ? -1 : static_cast<int>(executableInfo.st_uid))};
     const char *arguments[]={executable.fileSystemRepresentation,"--hud",NSPFolder.fileSystemRepresentation,NULL};
     pid_t child=0;
     if (!rc) {stage=@"posix_spawn";rc=posix_spawn(&child,arguments[0],NULL,&attributes,const_cast<char **>(arguments),environ);}
     posix_spawnattr_destroy(&attributes);
     if (rc) {
-        NSPLaunchReport(stage,[NSString stringWithFormat:@"外置进程启动失败：%d（%s）；尚不能确定是权限问题",rc,strerror(rc)],rc,0,nil);
+        NSPLaunchReport(stage,[NSString stringWithFormat:@"外置进程启动失败：%d（%s）；尚不能确定是权限问题",rc,strerror(rc)],rc,0,helperInfo);
         [self refresh];return;
     }
-    NSPLaunchReport(@"child_created",[NSString stringWithFormat:@"外置进程已创建：%d，等待悬浮层状态",child],0,child,nil);
+    NSPLaunchReport(@"child_created",[NSString stringWithFormat:@"外置进程已创建：%d，等待悬浮层状态",child],0,child,helperInfo);
     [self refresh];
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
         int status=0;pid_t reaped;
@@ -394,8 +426,9 @@ static void NSPStopCallback(CFNotificationCenterRef center,void *observer,CFStri
 }
 @end
 
-static int NSPHUDMain(void) {
-    NSPReport(@"外置进程已进入，正在初始化窗口服务",nil);
+[[maybe_unused]] static int NSPHUDMain(void) {
+    NSPReport(@"外置进程已进入，正在初始化窗口服务",@{@"runtime_entitlements":NSPRuntimePermissions()});
+    if (geteuid()!=0) {NSPReport(@"辅助进程未以 root 身份启动，已停止初始化",nil);return 7;}
     // Same private HUD entry sequence used by TrollSpeed; no code injection.
     void *gs=dlopen("/System/Library/PrivateFrameworks/GraphicsServices.framework/GraphicsServices",RTLD_NOW);
     void *bks=dlopen("/System/Library/PrivateFrameworks/BackBoardServices.framework/BackBoardServices",RTLD_NOW);
@@ -423,14 +456,18 @@ static int NSPHUDMain(void) {
 }
 int main(int argc,char *argv[]) {
     @autoreleasepool {
+#ifdef NSP_HUD_HELPER
         if (argc==3 && !strcmp(argv[1],"--hud")) {
             NSPFolder=[NSString stringWithUTF8String:argv[2]];
             if (!NSPFolder.length || (![NSPFolder hasPrefix:@"/var/mobile/Containers/Data/Application/"] &&
                 ![NSPFolder hasPrefix:@"/private/var/mobile/Containers/Data/Application/"])) return 5;
             return NSPHUDMain();
         }
+        return 6; // This executable is a HUD helper, not a second launcher app.
+#else
         NSPFolder=[NSHomeDirectory() stringByAppendingPathComponent:@"Documents/NSPExternal"];
         [NSFileManager.defaultManager createDirectoryAtPath:NSPFolder withIntermediateDirectories:YES attributes:nil error:nil];
         return UIApplicationMain(argc,argv,nil,NSStringFromClass(NSPAppDelegate.class));
+#endif
     }
 }

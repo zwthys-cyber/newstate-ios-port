@@ -15,11 +15,19 @@ task_flags=(-arch arm64 -isysroot "$task_sdk_path" -miphoneos-version-min=17.0 -
 xcrun --sdk iphoneos clang++ "${task_flags[@]}" -c src/RemoteImage.cpp -o build/ExternalRemoteImage.o
 xcrun --sdk iphoneos clang++ "${task_flags[@]}" -fobjc-arc -c apps/ExternalPort/RemoteReader.mm -o build/ExternalReader.o
 xcrun --sdk iphoneos clang++ "${task_flags[@]}" -fobjc-arc -c apps/ExternalPort/main.mm -o build/ExternalMain.o
+xcrun --sdk iphoneos clang++ "${task_flags[@]}" -fobjc-arc -DNSP_HUD_HELPER=1 -c apps/ExternalPort/main.mm -o build/ExternalHUDMain.o
 xcrun --sdk iphoneos clang++ "${task_flags[@]}" build/PortCore.o build/ExternalRemoteImage.o build/ExternalReader.o build/ExternalMain.o \
-  -framework UIKit -framework Foundation -framework CoreGraphics -o "$task_app_path/NSPExternal"
+  -framework UIKit -framework Foundation -framework CoreGraphics -framework Security -o "$task_app_path/NSPExternal"
+xcrun --sdk iphoneos clang++ "${task_flags[@]}" build/PortCore.o build/ExternalRemoteImage.o build/ExternalReader.o build/ExternalHUDMain.o \
+  -framework UIKit -framework Foundation -framework CoreGraphics -framework Security -o "$task_app_path/NSPExternalHUD"
 cp apps/ExternalPort/Info.plist "$task_app_path/Info.plist"
 cp apps/ExternalPort/ThirdPartyNotices.txt "$task_app_path/ThirdPartyNotices.txt"
-plutil -lint "$task_app_path/Info.plist" apps/ExternalPort/Entitlements.plist
+plutil -lint "$task_app_path/Info.plist" apps/ExternalPort/Entitlements.plist apps/ExternalPort/HUDEntitlements.plist
+codesign --force --sign - --timestamp=none --pagesize 4096 --generate-entitlement-der \
+  --entitlements apps/ExternalPort/HUDEntitlements.plist "$task_app_path/NSPExternalHUD"
+codesign --verify --strict --verbose=2 "$task_app_path/NSPExternalHUD" 2>&1 | tee out/external-hud-signature.txt
+codesign -d --entitlements :- "$task_app_path/NSPExternalHUD" > out/external-hud-entitlements.plist
+plutil -lint out/external-hud-entitlements.plist
 codesign --force --sign - --timestamp=none --pagesize 4096 --generate-entitlement-der \
   --entitlements apps/ExternalPort/Entitlements.plist "$task_app_path"
 codesign --verify --strict --verbose=2 "$task_app_path" 2>&1 | tee out/external-signature.txt
@@ -28,6 +36,7 @@ plutil -lint out/external-entitlements.plist
 xcrun lipo "$task_app_path/NSPExternal" -verify_arch arm64
 xcrun otool -L "$task_app_path/NSPExternal" | tee out/external-dependencies.txt
 xcrun nm -u "$task_app_path/NSPExternal" | tee out/external-imports.txt
+xcrun nm -u "$task_app_path/NSPExternalHUD" | tee out/external-hud-imports.txt
 (cd build/external && /usr/bin/zip -qr "$task_output" Payload)
 cp apps/ExternalPort/README.zh-CN.md out/NSPExternal-README.zh-CN.md
 cp apps/ExternalPort/ThirdPartyNotices.txt out/NSPExternal-ThirdPartyNotices.txt
