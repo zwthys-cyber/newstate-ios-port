@@ -213,7 +213,7 @@ static void NSPLog(NSString *text) {
         [stack.trailingAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.trailingAnchor],
         [stack.widthAnchor constraintEqualToAnchor:scroll.frameLayoutGuide.widthAnchor]]];
     self.status=[UILabel new];self.status.font=[UIFont systemFontOfSize:12];self.status.textColor=UIColor.whiteColor;self.status.numberOfLines=0;
-    self.status.text=@"NEW STATE 0.9.98 · 只读适配 0.1.1\n关闭：点击开关开始采样";[stack addArrangedSubview:self.status];
+    self.status.text=@"NEW STATE 0.9.98 · 只读适配 0.1.2\n关闭：点击开关开始采样";[stack addArrangedSubview:self.status];
     [stack addArrangedSubview:[self switchRow:@"开启只读显示" selector:@selector(enabledChanged:) on:NO]];
     [stack addArrangedSubview:[self switchRow:@"其他角色（包含队友）" selector:@selector(charactersChanged:) on:YES]];
     [stack addArrangedSubview:[self switchRow:@"载具" selector:@selector(vehiclesChanged:) on:YES]];
@@ -275,7 +275,7 @@ static void NSPLog(NSString *text) {
 - (void)crosshairChanged:(UISwitch *)s {self.overlay.crosshair=s.on;[self.overlay setNeedsDisplay];}
 - (void)skeletonsChanged:(UISwitch *)s {self.overlay.skeletons=s.on;[self.overlay setNeedsDisplay];}
 - (void)shareStatus {
-    NSMutableDictionary *report=[@{@"plugin_version":@"0.1.1",@"device_system":UIDevice.currentDevice.systemVersion,
+    NSMutableDictionary *report=[@{@"plugin_version":@"0.1.2",@"device_system":UIDevice.currentDevice.systemVersion,
         @"game_version":@"0.9.98",@"game_build":@"804",@"expected_uuid":NSPUUID,
         @"status":self.status.text?:@"",@"memory_writes":@NO,@"engine_calls":@NO} mutableCopy];
     auto snapshot=self.overlay.snapshot;
@@ -332,7 +332,7 @@ static void NSPBootstrap(void) {
     @autoreleasepool {
         // All Foundation/UIKit work begins on the main queue after image initialization.
         if (![NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.pubg.newstate"]) return;
-        NSPLog(@"NewStatePort 0.1.1 phase: main queue reached");
+        NSPLog(@"NewStatePort 0.1.2 phase: main queue reached");
         @try {
             NSString *reason=NSPValidate();
             NSPLog([NSString stringWithFormat:@"phase: identity %@; iOS %@",reason?:@"matched",UIDevice.currentDevice.systemVersion]);
