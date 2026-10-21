@@ -16,7 +16,7 @@
 extern char **environ;
 static NSString *NSPFolder;
 static NSString *const NSPStop=@"org.newstateport.external.stop";
-static NSString *const NSPVersion=@"0.2.0";
+static NSString *const NSPVersion=@"0.2.1";
 
 @interface UIApplication (NSPPrivate)
 - (void)_accessibilityInit;
@@ -45,6 +45,16 @@ static void NSPReport(NSString *status,NSDictionary *extra) {
         @"on_device_verified":@NO} mutableCopy];
     if (extra) [report addEntriesFromDictionary:extra];
     NSPWriteJSON(@"status.json",report);
+}
+static void NSPLaunchReport(NSString *phase,NSString *message,int error,pid_t child,NSDictionary *extra) {
+    NSMutableDictionary *report=[@{@"version":NSPVersion,@"parent_pid":@(getpid()),
+        @"parent_uid":@(getuid()),@"parent_euid":@(geteuid()),@"helper_pid":@(child),
+        @"time":@(NSDate.date.timeIntervalSince1970),@"phase":phase,@"status":message,
+        @"error_code":@(error),@"error_text":error ? [NSString stringWithUTF8String:strerror(error)] : @""} mutableCopy];
+    if (extra) [report addEntriesFromDictionary:extra];
+    // The controller owns this file, so a child denied launch cannot suppress diagnostics.
+    NSPWriteJSON(@"launch.json",report);
+    if (!NSPReadJSON(@"status.json")) NSPWriteJSON(@"status.json",report);
 }
 static NSDictionary *NSPDefaults(void) {
     return @{@"sampling":@NO,@"characters":@YES,@"vehicles":@YES,@"items":@NO,
@@ -283,22 +293,27 @@ static void NSPStopCallback(CFNotificationCenterRef center,void *observer,CFStri
     scope.text=@"尚未实现：队伍区分、自瞄、后坐力修改、去雾、检测屏蔽。\n原游戏文件保持不变。本工具不保证游戏接受外部读取。\n窗口方向不合适时切换横屏方向。停止按钮只结束本工具的悬浮进程。\nHUD 启动方式参考 Lessica/TrollSpeed（MIT），许可随包提供。";[stack addArrangedSubview:scope];
     __weak NSPControl *weak=self;
     self.timer=[NSTimer scheduledTimerWithTimeInterval:1 repeats:YES block:^(NSTimer *timer) {(void)timer;[weak refresh];}];
-    [self save];[self refresh];
+    [self save];
+    if (!NSPReadJSON(@"launch.json")) NSPLaunchReport(@"idle",@"尚未尝试启动悬浮进程",0,0,nil);
+    [self refresh];
 }
 - (void)save {NSPWriteJSON(@"settings.json",self.settings);}
 - (void)toggle:(UISwitch *)sender {self.settings[sender.accessibilityIdentifier]=@(sender.on);[self save];}
 - (void)orientationChanged:(UISegmentedControl *)sender {self.settings[@"orientation"]=@(sender.selectedSegmentIndex);[self save];}
 - (void)refresh {
     NSDictionary *report=NSPReadJSON(@"status.json");
+    NSDictionary *launch=NSPReadJSON(@"launch.json");
     NSTimeInterval stamp=[report[@"time"] doubleValue];
     NSString *age=stamp ? [NSString stringWithFormat:@"%.0f 秒前",MAX(0,NSDate.date.timeIntervalSince1970-stamp)] : @"无记录";
-    self.status.text=report ? [NSString stringWithFormat:@"%@\n更新：%@ · 读取错误：%@\n相机：%@ · 标记：%@",
+    NSString *hud=report ? [NSString stringWithFormat:@"%@\n更新：%@ · 读取错误：%@\n相机：%@ · 标记：%@",
         report[@"status"]?:@"",age,report[@"read_error"]?:@0,report[@"camera_ready"]?:@NO,report[@"markers"]?:@0] : @"悬浮层尚未启动";
+    self.status.text=launch ? [NSString stringWithFormat:@"启动记录：%@\n阶段：%@ · 错误码：%@\n%@",
+        launch[@"status"]?:@"",launch[@"phase"]?:@"",launch[@"error_code"]?:@0,hud] : hud;
 }
 - (void)stopHUD {CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),(__bridge CFStringRef)NSPStop,NULL,NULL,true);}
 - (void)startHUD {
     [self save];[self stopHUD];
-    self.status.text=@"正在启动外置进程…";
+    NSPLaunchReport(@"requested",@"正在启动外置进程…",0,0,nil);[self refresh];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC),dispatch_get_main_queue(),^{[self spawnHUD];});
 }
 - (void)spawnHUD {
@@ -307,22 +322,42 @@ static void NSPStopCallback(CFNotificationCenterRef center,void *observer,CFStri
     auto persona=reinterpret_cast<Persona>(dlsym(RTLD_DEFAULT,"posix_spawnattr_set_persona_np"));
     auto uid=reinterpret_cast<Identity>(dlsym(RTLD_DEFAULT,"posix_spawnattr_set_persona_uid_np"));
     auto gid=reinterpret_cast<Identity>(dlsym(RTLD_DEFAULT,"posix_spawnattr_set_persona_gid_np"));
-    if (!persona || !uid || !gid) {self.status.text=@"系统不提供所需的辅助进程启动接口";return;}
+    if (!persona || !uid || !gid) {
+        NSPLaunchReport(@"persona_api_missing",@"系统不提供所需的辅助进程启动接口",0,0,
+            @{@"persona_api":@(persona!=nullptr),@"uid_api":@(uid!=nullptr),@"gid_api":@(gid!=nullptr)});
+        [self refresh];return;
+    }
     posix_spawnattr_t attributes;int rc=posix_spawnattr_init(&attributes);
-    if (rc) {self.status.text=@"无法初始化辅助进程";return;}
-    rc=persona(&attributes,99,1);if (!rc) rc=uid(&attributes,0);if (!rc) rc=gid(&attributes,0);
+    if (rc) {NSPLaunchReport(@"spawnattr_init",@"无法初始化辅助进程",rc,0,nil);[self refresh];return;}
+    NSString *stage=@"persona";
+    rc=persona(&attributes,99,1);
+    if (!rc) {stage=@"persona_uid";rc=uid(&attributes,0);}
+    if (!rc) {stage=@"persona_gid";rc=gid(&attributes,0);}
     NSString *executable=NSBundle.mainBundle.executablePath;
     const char *arguments[]={executable.fileSystemRepresentation,"--hud",NSPFolder.fileSystemRepresentation,NULL};
     pid_t child=0;
-    if (!rc) rc=posix_spawn(&child,arguments[0],NULL,&attributes,const_cast<char **>(arguments),environ);
+    if (!rc) {stage=@"posix_spawn";rc=posix_spawn(&child,arguments[0],NULL,&attributes,const_cast<char **>(arguments),environ);}
     posix_spawnattr_destroy(&attributes);
-    if (rc) {self.status.text=[NSString stringWithFormat:@"外置进程启动失败：%d（需 TrollStore 安装权限）",rc];return;}
-    self.status.text=[NSString stringWithFormat:@"外置进程已创建：%d，等待悬浮层状态",child];
+    if (rc) {
+        NSPLaunchReport(stage,[NSString stringWithFormat:@"外置进程启动失败：%d（%s）；尚不能确定是权限问题",rc,strerror(rc)],rc,0,nil);
+        [self refresh];return;
+    }
+    NSPLaunchReport(@"child_created",[NSString stringWithFormat:@"外置进程已创建：%d，等待悬浮层状态",child],0,child,nil);
+    [self refresh];
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
         int status=0;pid_t reaped;
         do {reaped=waitpid(child,&status,0);} while (reaped<0 && errno==EINTR);
         if (reaped>0) {
             dispatch_async(dispatch_get_main_queue(),^{
+                NSDictionary *launch=NSPReadJSON(@"launch.json");
+                if ([launch[@"helper_pid"] intValue]==child) {
+                    NSMutableDictionary *extra=[@{@"helper_wait_status":@(status)} mutableCopy];
+                    NSString *message;
+                    if (WIFSIGNALED(status)) {extra[@"exit_signal"]=@(WTERMSIG(status));message=[NSString stringWithFormat:@"辅助进程被信号 %d 终止",WTERMSIG(status)];}
+                    else if (WIFEXITED(status)) {extra[@"exit_code"]=@(WEXITSTATUS(status));message=[NSString stringWithFormat:@"辅助进程已退出，退出码 %d",WEXITSTATUS(status)];}
+                    else message=[NSString stringWithFormat:@"辅助进程状态：%d",status];
+                    NSPLaunchReport(@"child_exited",message,0,child,extra);
+                }
                 NSDictionary *old=NSPReadJSON(@"status.json");
                 if ([old[@"helper_pid"] intValue]==child && ![old[@"stopped"] boolValue]) {
                     NSMutableDictionary *report=[old mutableCopy];report[@"helper_wait_status"]=@(status);
@@ -336,7 +371,7 @@ static void NSPStopCallback(CFNotificationCenterRef center,void *observer,CFStri
 }
 - (void)shareStatus {
     NSMutableArray *files=[NSMutableArray array];
-    for (NSString *name in @[@"status.json",@"settings.json"]) {
+    for (NSString *name in @[@"status.json",@"settings.json",@"launch.json"]) {
         if ([NSFileManager.defaultManager fileExistsAtPath:NSPPath(name)]) [files addObject:[NSURL fileURLWithPath:NSPPath(name)]];
     }
     if (!files.count) {self.status.text=@"暂无状态文件可导出";return;}

@@ -65,7 +65,7 @@ for i in range(blobs):
         assert hashlib.sha256(data[j*4096:min((j+1)*4096,limit)]).digest()==expected
     verified+=codes
 assert verified and embedded_ent==ent
-report=dict(app_version='0.2.0',bundle_id=info['CFBundleIdentifier'],architecture='arm64',minimum_os='17.0',
+report=dict(app_version=info['CFBundleShortVersionString'],bundle_id=info['CFBundleIdentifier'],architecture='arm64',minimum_os='17.0',
     dependencies=deps,signature_pages_verified=verified,entitlements_verified=True,only_read_port_requested=True,
     no_embedded_game_or_plugins=True,archive_crc_verified=True,developer_mode_test_condition='off',
     on_device_tested=False,external_read_permission_verified=False,cross_app_overlay_verified=False,
