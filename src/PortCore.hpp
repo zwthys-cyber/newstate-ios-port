@@ -51,7 +51,7 @@ struct Snapshot {
 
 // Memory observations only: no engine function calls, code hooks or writes.
 class Sampler {
-    struct Candidate { uint64_t object, item; int32_t serial; Kind kind; };
+    struct Candidate { uint64_t object, item; int32_t serial; Kind kind; float distance; };
     Memory memory;
     std::unordered_map<uint64_t, int> classKinds;
     std::vector<Candidate> candidates;

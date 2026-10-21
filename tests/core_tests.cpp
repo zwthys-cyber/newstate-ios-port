@@ -134,6 +134,20 @@ static void completeReadPipeline() {
     out=sampler.sample();assert(!out.cameraReady && out.markers.empty());
     f.set(camera+0x1bc0,90.0f);f.set(chunk+20,int32_t(999));
     out=sampler.sample();assert(!out.cameraReady && out.controller==0);
+    // Many item objects must not consume the character discovery budget.
+    f.set(chunk+20,int32_t(111));f.set(base+0x8174538,int32_t(602));
+    constexpr uint64_t itemClass=0x400010000;
+    f.allocate(itemClass,0x100);f.allocate(base+0x7f06a00,8);f.set(base+0x7f06a00,itemClass);
+    for (uint64_t i=1;i<=600;++i) {
+        uint64_t item=0x700000000+i*0x1000;f.allocate(item,0x400);
+        f.set(item+0x30,encoded(itemClass));f.set(item+8,encoded(level));f.set(item+0x278,root);
+        f.set(chunk+i*24+8,item);f.set(chunk+i*24+16,uint32_t(0));f.set(chunk+i*24+20,int32_t(i));
+    }
+    f.set(chunk+601*24+8,target);f.set(chunk+601*24+16,uint32_t(0));f.set(chunk+601*24+20,int32_t(222));
+    Sampler crowded(memory);out=crowded.sample();
+    size_t characters=0,items=0;
+    for (const auto &marker:out.markers) {if (marker.kind==Kind::character) ++characters;else if (marker.kind==Kind::item) ++items;}
+    assert(characters==1 && items==256);
 }
 static void skeletonReader() {
     struct Transform {float q[4];Vec3 translation,scale;float padding[2];};

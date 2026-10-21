@@ -207,7 +207,22 @@ void Sampler::discover(Snapshot &out) {
                 int kind=classify(objectClass(memory,it.object));
                 if (!kind || it.object==out.pawn || !inWorld(it.object,out.world)) continue;
                 bool exists=std::any_of(candidates.begin(),candidates.end(),[&](const Candidate &c){return c.object==it.object;});
-                if (!exists && candidates.size()<512) candidates.push_back({it.object,itemAddress+i*sizeof(Item),it.serial,Kind(kind)});
+                if (exists) continue;
+                Vec3 location;
+                if (!position(it.object,location)) continue;
+                float range=distance(location,out.camera.position);
+                if (range>=300000) continue;
+                Kind category=Kind(kind);
+                size_t limit=category==Kind::vehicle ? 128 : 256;
+                size_t countInKind=size_t(std::count_if(candidates.begin(),candidates.end(),[&](const Candidate &c){return c.kind==category;}));
+                Candidate incoming{it.object,itemAddress+i*sizeof(Item),it.serial,category,range};
+                if (countInKind<limit) candidates.push_back(incoming);
+                else {
+                    auto farthest=candidates.end();
+                    for (auto candidate=candidates.begin();candidate!=candidates.end();++candidate)
+                        if (candidate->kind==category && (farthest==candidates.end() || candidate->distance>farthest->distance)) farthest=candidate;
+                    if (farthest!=candidates.end() && farthest->distance>range) *farthest=incoming;
+                }
             }
         }
         cursor+=take; work-=take;
@@ -256,6 +271,7 @@ Snapshot Sampler::sample(bool includeSkeleton) {
             (current.flags&0x30000000) || !inWorld(it->object,out.world)) {it=candidates.erase(it);continue;}
         Marker marker;marker.object=it->object;marker.kind=it->kind;
         if (position(it->object,marker.position) && distance(marker.position,c.position)<300000) {
+            it->distance=distance(marker.position,c.position);
             if (marker.kind==Kind::character) {
                 marker.playerName=playerName(memory,marker.object);
                 if (includeSkeleton) marker.bones=readSkeleton(memory,memory.encodedPointer(marker.object+0x320),marker.position);
@@ -267,7 +283,7 @@ Snapshot Sampler::sample(bool includeSkeleton) {
                 if (!std::isfinite(marker.halfHeight) || marker.halfHeight<10 || marker.halfHeight>300) marker.halfHeight=0;
             }
             out.markers.push_back(marker);
-        }
+        } else {it=candidates.erase(it);continue;}
         ++it;
     }
     return out;
