@@ -17,7 +17,7 @@
 extern char **environ;
 static NSString *NSPFolder;
 static NSString *const NSPStop=@"org.newstateport.external.stop";
-static NSString *const NSPVersion=@"0.2.5";
+static NSString *const NSPVersion=@"0.2.6";
 static NSString *const NSPStorage=@"/var/mobile/Library/Application Support/org.newstateport.External";
 
 @interface UIApplication (NSPPrivate)
@@ -383,6 +383,7 @@ static void NSPStopCallback(CFNotificationCenterRef center,void *observer,CFStri
 @property(nonatomic,strong) NSMutableDictionary *settings;
 @property(nonatomic,strong) UILabel *status;
 @property(nonatomic,strong) NSTimer *timer;
+@property(nonatomic) BOOL checkingMemory;
 @end
 @implementation NSPControl
 - (void)viewDidLoad {
@@ -406,7 +407,8 @@ static void NSPStopCallback(CFNotificationCenterRef center,void *observer,CFStri
     [stack addArrangedSubview:intro];
     self.status=[UILabel new];self.status.numberOfLines=0;self.status.font=[UIFont monospacedSystemFontOfSize:12 weight:UIFontWeightRegular];
     [stack addArrangedSubview:self.status];
-    for (NSArray *item in @[@[@"启动悬浮层",@"startHUD"],@[@"停止悬浮层",@"stopHUD"],@[@"导出状态",@"shareStatus"]]) {
+    for (NSArray *item in @[@[@"启动悬浮层",@"startHUD"],@[@"停止悬浮层",@"stopHUD"],
+        @[@"内存权限实测（不改游戏数据）",@"checkMemory"],@[@"导出状态",@"shareStatus"]]) {
         UIButton *button=[UIButton buttonWithType:UIButtonTypeSystem];[button setTitle:item[0] forState:UIControlStateNormal];
         [button addTarget:self action:NSSelectorFromString(item[1]) forControlEvents:UIControlEventTouchUpInside];[stack addArrangedSubview:button];
     }
@@ -443,6 +445,56 @@ static void NSPStopCallback(CFNotificationCenterRef center,void *observer,CFStri
         report[@"status"]?:@"",age,report[@"read_error"]?:@0,report[@"camera_ready"]?:@NO,report[@"markers"]?:@0] : @"悬浮层尚未启动";
     self.status.text=launch ? [NSString stringWithFormat:@"启动记录：%@\n阶段：%@ · 错误码：%@\n%@",
         launch[@"status"]?:@"",launch[@"phase"]?:@"",launch[@"error_code"]?:@0,hud] : hud;
+    NSDictionary *memory=NSPReadJSON(@"memory-check.json");
+    NSDictionary *memoryLaunch=NSPReadJSON(@"memory-check-launch.json");
+    if (memoryLaunch) self.status.text=[self.status.text stringByAppendingFormat:@"\n权限实测：%@ · %@",
+        memoryLaunch[@"status"]?:@"",memory[@"stage"]?:@"尚未进入验证程序"];
+}
+- (void)checkMemory {
+    if (self.checkingMemory) return;
+    self.checkingMemory=YES;
+    // Keep the running HUD and its existing read-only permissions separate from the probe.
+    using Persona=int (*)(const posix_spawnattr_t *,uid_t,uint32_t);
+    using Identity=int (*)(const posix_spawnattr_t *,uid_t);
+    auto persona=reinterpret_cast<Persona>(dlsym(RTLD_DEFAULT,"posix_spawnattr_set_persona_np"));
+    auto uid=reinterpret_cast<Identity>(dlsym(RTLD_DEFAULT,"posix_spawnattr_set_persona_uid_np"));
+    auto gid=reinterpret_cast<Identity>(dlsym(RTLD_DEFAULT,"posix_spawnattr_set_persona_gid_np"));
+    NSMutableDictionary *launch=[@{@"version":NSPVersion,@"time":@(NSDate.date.timeIntervalSince1970),
+        @"parent_uid":@(getuid()),@"parent_euid":@(geteuid()),@"status":@"正在启动内存权限验证程序"} mutableCopy];
+    NSPWriteJSON(@"memory-check-launch.json",launch);
+    [NSFileManager.defaultManager removeItemAtPath:NSPPath(@"memory-check.json") error:nil];
+    posix_spawnattr_t attributes;int initialized=posix_spawnattr_init(&attributes);int rc=initialized;
+    if (!rc) rc=(!persona || !uid || !gid) ? ENOSYS : persona(&attributes,99,1);
+    if (!rc) rc=uid(&attributes,0);
+    if (!rc) rc=gid(&attributes,0);
+    NSString *executable=[NSBundle.mainBundle.bundlePath stringByAppendingPathComponent:@"NSPMemoryCheck"];
+    const char *args[]={executable.fileSystemRepresentation,"--run",nullptr};pid_t child=0;
+    if (!rc) rc=posix_spawn(&child,args[0],nullptr,&attributes,const_cast<char **>(args),environ);
+    if (!initialized) posix_spawnattr_destroy(&attributes);
+    launch[@"spawn_return"]=@(rc);launch[@"probe_pid"]=@(child);
+    launch[@"status"]=rc ? [NSString stringWithFormat:@"验证程序启动失败：%d（%s）",rc,strerror(rc)] : @"验证程序运行中";
+    NSPWriteJSON(@"memory-check-launch.json",launch);[self refresh];
+    if (rc) {self.checkingMemory=NO;return;}
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
+        int status=0;pid_t waited;
+        do {waited=waitpid(child,&status,0);} while (waited<0 && errno==EINTR);
+        dispatch_async(dispatch_get_main_queue(),^{
+            self.checkingMemory=NO;
+            NSMutableDictionary *result=[NSPReadJSON(@"memory-check-launch.json") mutableCopy];
+            if ([result[@"probe_pid"] intValue]==child) {
+                result[@"wait_status"]=@(status);
+                if (waited==child && WIFEXITED(status)) {
+                    result[@"exit_code"]=@(WEXITSTATUS(status));
+                    result[@"status"]=[NSString stringWithFormat:@"验证程序已退出，代码 %d；结果见导出文件",WEXITSTATUS(status)];
+                } else if (waited==child && WIFSIGNALED(status)) {
+                    result[@"exit_signal"]=@(WTERMSIG(status));
+                    result[@"status"]=[NSString stringWithFormat:@"验证程序被信号 %d 终止",WTERMSIG(status)];
+                } else result[@"status"]=@"无法取得验证程序退出状态";
+                NSPWriteJSON(@"memory-check-launch.json",result);
+            }
+            [self refresh];
+        });
+    });
 }
 - (void)stopHUD {CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),(__bridge CFStringRef)NSPStop,NULL,NULL,true);}
 - (void)startHUD {
@@ -527,7 +579,8 @@ static void NSPStopCallback(CFNotificationCenterRef center,void *observer,CFStri
 }
 - (void)shareStatus {
     NSMutableArray *files=[NSMutableArray array];
-    for (NSString *name in @[@"status.json",@"settings.json",@"launch.json",@"spawn-check-mobile.json",@"spawn-check-root.json"]) {
+    for (NSString *name in @[@"status.json",@"settings.json",@"launch.json",@"spawn-check-mobile.json",@"spawn-check-root.json",
+        @"memory-check.json",@"memory-check-launch.json"]) {
         if ([NSFileManager.defaultManager fileExistsAtPath:NSPPath(name)]) [files addObject:[NSURL fileURLWithPath:NSPPath(name)]];
     }
     if (!files.count) {self.status.text=@"暂无状态文件可导出";return;}

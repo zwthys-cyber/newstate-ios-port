@@ -11,6 +11,17 @@ assert os.environ.get('GITHUB_ACTIONS')=='true' and os.environ.get('RUNNER_ENVIR
 ent=plistlib.loads(pathlib.Path('out/external-entitlements.plist').read_bytes())
 hud_ent=plistlib.loads(pathlib.Path('out/external-hud-entitlements.plist').read_bytes())
 probe_ent=plistlib.loads(pathlib.Path('out/external-probe-entitlements.plist').read_bytes())
+memory_ent=plistlib.loads(pathlib.Path('out/memory-check-entitlements.plist').read_bytes())
+assert memory_ent['task_for_pid-allow'] is True
+assert memory_ent['com.apple.system-task-ports.control'] is True
+assert memory_ent['com.apple.system-task-ports.read'] is True
+assert memory_ent['com.apple.private.security.no-container'] is True
+assert memory_ent['com.apple.private.security.container-required'] is False
+for key in ('get-task-allow','dynamic-codesigning','com.apple.private.cs.debugger','com.apple.private.skip-library-validation'):
+    assert not memory_ent.get(key)
+memory_imports=set(pathlib.Path('out/memory-check-imports.txt').read_text().split())
+assert '_task_for_pid' in memory_imports and '_vm_write' in memory_imports
+assert not memory_imports.intersection(('_ptrace','_vm_protect','_mach_vm_protect','_thread_set_state','_task_suspend','_task_terminate'))
 assert ent['com.apple.private.persona-mgmt'] is True
 assert ent['com.apple.private.security.container-required'] is False
 assert ent['com.apple.private.security.no-container'] is True
@@ -42,7 +53,7 @@ with zipfile.ZipFile('out/NSPExternal.ipa') as z:
     info=plistlib.loads(z.read(prefix+'Info.plist'))
     assert info['CFBundleIdentifier']=='org.newstateport.External' and info['MinimumOSVersion']=='17.0'
     assert z.read(prefix+'ThirdPartyNotices.txt')==pathlib.Path('apps/ExternalPort/ThirdPartyNotices.txt').read_bytes()
-    binaries={name:z.read(prefix+name) for name in ('NSPExternal','NSPExternalHUD','NSPSpawnProbe')}
+    binaries={name:z.read(prefix+name) for name in ('NSPExternal','NSPExternalHUD','NSPSpawnProbe','NSPMemoryCheck')}
 def verify_binary(data,expected_ent):
     magic,cpu,subtype,kind,count,command_size=struct.unpack_from('<6I',data)
     assert (magic,cpu,subtype,kind)==(0xfeedfacf,0x100000c,0,2)
@@ -84,13 +95,15 @@ def verify_binary(data,expected_ent):
         verified+=codes
     assert verified and embedded_ent==expected_ent
     return dict(signature_pages_verified=verified,dependencies=deps,entitlements_verified=True)
-expected_ents={'NSPExternal':ent,'NSPExternalHUD':hud_ent,'NSPSpawnProbe':probe_ent}
+expected_ents={'NSPExternal':ent,'NSPExternalHUD':hud_ent,'NSPSpawnProbe':probe_ent,'NSPMemoryCheck':memory_ent}
 binary_reports={name:verify_binary(data,expected_ents[name])
                 for name,data in binaries.items()}
 assert binary_reports['NSPSpawnProbe']['dependencies']==['/usr/lib/libSystem.B.dylib']
 report=dict(app_version=info['CFBundleShortVersionString'],bundle_id=info['CFBundleIdentifier'],architecture='arm64',minimum_os='17.0',
     binaries=binary_reports,signature_pages_verified=sum(v['signature_pages_verified'] for v in binary_reports.values()),
-    entitlements_verified=True,only_read_port_requested=True,separate_containerless_hud=True,containerless_launcher=True,
+    entitlements_verified=True,only_read_port_requested=False,overlay_only_read_port_requested=True,
+    manual_control_probe_included=True,manual_probe_writes_only_owned_scratch=True,
+    separate_containerless_hud=True,containerless_launcher=True,
     no_embedded_game_or_plugins=True,archive_crc_verified=True,developer_mode_test_condition='off',
     on_device_tested=False,external_read_permission_verified=False,cross_app_overlay_verified=False,
     game_files_modified=False,game_memory_writes=False)

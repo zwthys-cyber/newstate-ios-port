@@ -11,6 +11,9 @@ task_sdk_path="$(xcrun --sdk iphoneos --show-sdk-path)"
 xcrun clang++ -std=c++17 -Wall -Wextra -Werror -UNDEBUG -fsanitize=address,undefined \
   -Isrc src/PortCore.cpp src/RemoteImage.cpp tests/remote_image_tests.cpp -o build/remote-image-tests
 build/remote-image-tests | tee out/remote-image-tests.txt
+xcrun clang++ -std=c++17 -Wall -Wextra -Werror -fobjc-arc -fsanitize=address,undefined \
+  apps/ExternalPort/MemoryCheck.mm -framework Foundation -framework Security -o build/memory-check-host
+build/memory-check-host --self-test | tee out/memory-check-host-tests.txt
 task_flags=(-arch arm64 -isysroot "$task_sdk_path" -miphoneos-version-min=17.0 -std=c++17 -O2 -Wall -Wextra -Werror -Isrc -Iapps/ExternalPort)
 xcrun --sdk iphoneos clang++ "${task_flags[@]}" -c src/RemoteImage.cpp -o build/ExternalRemoteImage.o
 xcrun --sdk iphoneos clang++ "${task_flags[@]}" -fobjc-arc -c apps/ExternalPort/RemoteReader.mm -o build/ExternalReader.o
@@ -22,9 +25,16 @@ xcrun --sdk iphoneos clang++ "${task_flags[@]}" build/PortCore.o build/ExternalR
   -framework UIKit -framework Foundation -framework CoreGraphics -framework Security -o "$task_app_path/NSPExternalHUD"
 xcrun --sdk iphoneos clang -arch arm64 -isysroot "$task_sdk_path" -miphoneos-version-min=17.0 \
   -std=c11 -O2 -Wall -Wextra -Werror apps/ExternalPort/SpawnProbe.c -o "$task_app_path/NSPSpawnProbe"
+xcrun --sdk iphoneos clang++ "${task_flags[@]}" -fobjc-arc apps/ExternalPort/MemoryCheck.mm \
+  -framework Foundation -framework Security -o "$task_app_path/NSPMemoryCheck"
 cp apps/ExternalPort/Info.plist "$task_app_path/Info.plist"
 cp apps/ExternalPort/ThirdPartyNotices.txt "$task_app_path/ThirdPartyNotices.txt"
-plutil -lint "$task_app_path/Info.plist" apps/ExternalPort/Entitlements.plist apps/ExternalPort/HUDEntitlements.plist apps/ExternalPort/ProbeEntitlements.plist
+plutil -lint "$task_app_path/Info.plist" apps/ExternalPort/Entitlements.plist apps/ExternalPort/HUDEntitlements.plist apps/ExternalPort/ProbeEntitlements.plist apps/ExternalPort/MemoryCheckEntitlements.plist
+codesign --force --sign - --timestamp=none --pagesize 4096 --generate-entitlement-der \
+  --entitlements apps/ExternalPort/MemoryCheckEntitlements.plist "$task_app_path/NSPMemoryCheck"
+codesign --verify --strict --verbose=2 "$task_app_path/NSPMemoryCheck" 2>&1 | tee out/memory-check-signature.txt
+codesign -d --entitlements :- "$task_app_path/NSPMemoryCheck" > out/memory-check-entitlements.plist
+plutil -lint out/memory-check-entitlements.plist
 codesign --force --sign - --timestamp=none --pagesize 4096 --generate-entitlement-der \
   --entitlements apps/ExternalPort/ProbeEntitlements.plist "$task_app_path/NSPSpawnProbe"
 codesign --verify --strict --verbose=2 "$task_app_path/NSPSpawnProbe" 2>&1 | tee out/external-probe-signature.txt
@@ -45,6 +55,7 @@ xcrun otool -L "$task_app_path/NSPExternal" | tee out/external-dependencies.txt
 xcrun nm -u "$task_app_path/NSPExternal" | tee out/external-imports.txt
 xcrun nm -u "$task_app_path/NSPExternalHUD" | tee out/external-hud-imports.txt
 xcrun nm -u "$task_app_path/NSPSpawnProbe" | tee out/external-probe-imports.txt
+xcrun nm -u "$task_app_path/NSPMemoryCheck" | tee out/memory-check-imports.txt
 (cd build/external && /usr/bin/zip -qr "$task_output" Payload)
 cp apps/ExternalPort/README.zh-CN.md out/NSPExternal-README.zh-CN.md
 cp apps/ExternalPort/ThirdPartyNotices.txt out/NSPExternal-ThirdPartyNotices.txt
