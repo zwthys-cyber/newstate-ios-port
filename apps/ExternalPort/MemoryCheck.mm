@@ -180,7 +180,7 @@ int main(int argc,char **argv) {
         if (argc==2 && !strcmp(argv[1],"--scratch")) return scratchChild();
         if (argc==2 && !strcmp(argv[1],"--self-test")) return selfTest();
         if (argc!=2 || strcmp(argv[1],"--run")) return 64;
-        NSMutableDictionary *report=[@{@"version":@"0.3.0",@"pid":@(getpid()),@"uid":@(getuid()),@"euid":@(geteuid()),
+        NSMutableDictionary *report=[@{@"version":@"0.3.1",@"pid":@(getpid()),@"uid":@(getuid()),@"euid":@(geteuid()),
             @"time":@(NSDate.date.timeIntervalSince1970),@"os":NSProcessInfo.processInfo.operatingSystemVersionString,
             @"runtime_entitlements":permissions(),@"stage":@"started",@"game_memory_written":@NO,@"developer_mode_changed":@NO} mutableCopy];
         save(report);

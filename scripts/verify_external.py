@@ -52,7 +52,7 @@ with zipfile.ZipFile('out/NSPExternal.ipa') as z:
     prefix='Payload/NSPExternal.app/'
     info=plistlib.loads(z.read(prefix+'Info.plist'))
     assert info['CFBundleIdentifier']=='org.newstateport.External' and info['MinimumOSVersion']=='17.0'
-    assert info['CFBundleShortVersionString']=='0.3.0' and info['CFBundleDisplayName']=='NSP Pro'
+    assert info['CFBundleShortVersionString']=='0.3.1' and info['CFBundleDisplayName']=='NSP Pro'
     assert info['CFBundleIcons']['CFBundlePrimaryIcon']['CFBundleIconName']=='AppIcon'
     assert prefix+'Assets.car' in z.namelist()
     # actool stores the 3x rendition in Assets.car; its standalone fallback is 2x.

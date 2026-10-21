@@ -59,3 +59,15 @@ SkeletalMeshComponent 构造设置虚表 RVA 0x7c6b8e0。其 +0x490 槽对应 Ge
 原 APK 的资源名为 External Pubg Cheat | Modyolo.com，包名 google.suport.misaki，针对 PUBG Mobile。重新实现的是显示类别和配置概念，不是把 ELF 二进制转换为 Mach-O，也没有沿用 Android 内存偏移。
 
 本阶段没有移植原 APK 的删除脚本、iptables 修改脚本或加密 ZIP 内容。未完成的游戏写入功能明确列在 README 和菜单中；没有用可切换的空开关冒充已实现功能。
+
+## 0.3.1 队伍、类型、死亡和快速发现依据
+
+以下均针对同一主程序 UUID；仅记录读取依据，不包含原始设备数据。
+
+- `TeamMemberInfo` 结构注册参数 VA `0x107586a30` 指定大小 8，两个 int32 属性 `TeamNumber` / `MyNumber` 分别位于 +0 / +4（描述符 VA `0x1075869d0` / `0x1075869f8`）。XtrmCharacter.MemberInfo 位于 +0xc04，XtrmPlayerState.MemberInfo 位于 +0xba4。原生 RVA `0x224d564` 比较两个角色 +0xc04；RVA `0x1c314e4` 附近验证 state 的 TeamNumber/MyNumber 不为 -1 后比较。当前实现要求两者非负，允许队号 0；本地角色不就绪时可从控制器的 XtrmPlayerState 回退读取。只有确认同队才默认过滤，不从名字/距离猜队伍。
+- PlayerState.bIsABot 的生成设置函数 RVA `0x5997b50` 读取 +0x2b8 并 OR `0x08`；读取相同位，且先验证 PlayerState 类型。读取或类型验证失败时标记未知，不能因为未读到 bot 标志就认定真人。此位在当前游戏模式中是否完整反映人机身份仍需对局确认。
+- XtrmCharacter.IsDying 的 exec 注册包装 RVA `0x35f6d10` 调用 RVA `0x22d5f68`，原生函数读取角色 +0x930 的 bit 0。每轮读取该位，置位即清除可绘制标记；不会用 Health==0 代替死亡，避免误删倒地角色。不要混用 TeamMemberState.GetIsDying 的 +0x334 字段，它属于另一个类。
+- World.GameState 为 +0x148 普通对象指针，GameStateBase 单例 RVA `0x809ae70`；PlayerArray 为 +0x2c8 的对象指针数组；PlayerState.PawnPrivate 为 +0x368 普通对象指针。快速路径只读这些登记字段，验证 actor.PlayerState 的反向引用，再核对全局对象表中的对象指针、serial 和销毁标志。
+- 原生 RVA `0x22d5fbc` 附近等有效性检查读取 UObject +0x20 的三个 uint32，以 key `0xb5c76d21` 及 ROR7 解码后索引 GUObjectArray。快速路径复用相同解码，但只有索引在对象数范围内且表项反查等于目标 actor 才接纳；不以解码值本身当作可信指针。
+
+快速路径每轮最多检查 32 个玩家状态，不阻塞位置更新等待整个全局对象表扫描；全局扫描仍用于缺少 PlayerArray/PawnPrivate 的角色、载具和物资。诊断仅导出本地队伍是否就绪、过滤/分类计数、玩家数组可用性与本轮发现数量，不导出队号、昵称或玩家坐标。上述为静态依据和合成内存测试范围，尚不能声称真机类型判断或实际延迟已验证。

@@ -34,9 +34,13 @@ uint64_t resolveWeak(const Memory &memory, uint64_t address);
 std::vector<BoneLine> readSkeleton(const Memory &memory,uint64_t mesh,Vec3 reference);
 
 enum class Kind { character = 1, vehicle = 2, item = 3 };
+enum class PlayerKind { unknown, human, bot };
+enum class Relation { unknown, teammate, enemy };
 struct Marker {
-    uint64_t object{};
+    uint64_t object{},playerState{};
     Kind kind{};
+    PlayerKind playerKind{};
+    Relation relation{};
     Vec3 position;
     float health{}, maximum{}, halfHeight{};
     bool hasHealth{};
@@ -49,11 +53,14 @@ struct Snapshot {
     Camera camera;
     bool cameraReady{};
     uint32_t scanned{}, total{};
+    bool localTeamKnown{},playerArrayAvailable{};
+    uint32_t playersChecked{},playersDiscovered{},teammatesHidden{},deadHidden{},stateUnreadable{};
     std::vector<Marker> markers;
 };
 struct SampleOptions {
-    bool skeletons{},details{true};
+    bool skeletons{},details{true},hideTeammates{true};
     uint32_t discoveryBudget{2048};
+    uint32_t playerDiscoveryBudget{32};
     uint8_t kinds{7}; // character=1, vehicle=2, item=4
 };
 
@@ -64,10 +71,12 @@ class Sampler {
     std::unordered_map<uint64_t, int> classKinds;
     std::vector<Candidate> candidates;
     uint64_t lastWorld{};
-    uint32_t cursor{};
+    uint32_t cursor{},playerCursor{};
     int classify(uint64_t objectClass);
     bool inWorld(uint64_t actor, uint64_t world) const;
     bool position(uint64_t actor, Vec3 &out) const;
+    void discoverPlayers(Snapshot &out,const SampleOptions &options);
+    void admit(Snapshot &out,const SampleOptions &options,uint64_t object,uint64_t item,int32_t serial,Kind kind);
     void discover(Snapshot &out,const SampleOptions &options);
 public:
     explicit Sampler(Memory source) : memory(source) {}

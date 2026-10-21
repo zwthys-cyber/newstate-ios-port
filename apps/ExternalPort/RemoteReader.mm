@@ -120,8 +120,8 @@ RemoteResult RemoteReader::sample(const SampleOptions &requested) {
     }
     SampleOptions options=requested;
     options.details=now>=nextDetails;
-    options.discoveryBudget=256;
-    if (options.details) nextDetails=now+std::chrono::milliseconds(500);
+    options.discoveryBudget=512;
+    if (options.details) nextDetails=now+std::chrono::milliseconds(250);
     result.detailsRefreshed=options.details;
     result.snapshot=std::make_shared<Snapshot>(sampler->sample(options));
     result.status=result.snapshot->status;

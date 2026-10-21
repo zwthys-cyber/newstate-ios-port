@@ -1,4 +1,4 @@
-> 新版独立外置工具：[NSP Pro 0.3.0](apps/ExternalPort/README.zh-CN.md)，包含总览、显示预设、视觉样式与诊断界面。仅面向 iOS 17.0 / TrollStore；普通个人证书签名不支持。安装包及发布说明见 [Releases](https://github.com/zwthys-cyber/newstate-ios-port/releases)。
+> 新版独立外置工具：[NSP Pro 0.3.1](apps/ExternalPort/README.zh-CN.md)，包含总览、显示预设、视觉样式与诊断界面。仅面向 iOS 17.0 / TrollStore；普通个人证书签名不支持。安装包及发布说明见 [Releases](https://github.com/zwthys-cyber/newstate-ios-port/releases)。
 
 # NEW STATE iOS port
 

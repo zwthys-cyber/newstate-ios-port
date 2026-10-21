@@ -177,7 +177,7 @@ static UIColor *NSPCardColor(void) {return [UIColor colorWithRed:0.075 green:0.1
     [self toggleRow:@"sampling" title:@"游戏读取" detail:@"开启后显示角色、载具及所选标记" card:reading];
     [self separator:reading];[self toggleRow:@"hud_status" title:@"屏幕状态文字" detail:@"默认关闭，减少视野遮挡" card:reading];
     UIStackView *guide=[self card:@"当前配置" subtitle:nil];
-    [guide addArrangedSubview:[self label:@"角色标记包含队友\n骨架建议保持关闭；可在「显示」调整。" size:13 weight:UIFontWeightRegular color:UIColor.secondaryLabelColor]];
+    [guide addArrangedSubview:[self label:@"已确认队友默认隐藏\n真人敌人红色 · 人机黄色 · 未知橙色\n骨架建议保持关闭。" size:13 weight:UIFontWeightRegular color:UIColor.secondaryLabelColor]];
     [guide addArrangedSubview:[self label:[NSString stringWithFormat:@"NSP Pro %@  ·  保持开发者模式关闭",NSPVersion]
         size:11 weight:UIFontWeightMedium color:UIColor.tertiaryLabelColor]];
 }
@@ -189,11 +189,13 @@ static UIColor *NSPCardColor(void) {return [UIColor colorWithRed:0.075 green:0.1
     self.presets.accessibilityLabel=@"显示预设";self.presets.selectedSegmentIndex=UISegmentedControlNoSegment;
     [self.presets.heightAnchor constraintGreaterThanOrEqualToConstant:40].active=YES;
     [self.presets addTarget:self action:@selector(presetChanged:) forControlEvents:UIControlEventValueChanged];[preset addArrangedSubview:self.presets];
-    UIStackView *targets=[self card:@"目标类型" subtitle:@"当前不区分敌我。物资和骨架属于实验性显示。"];
-    [self toggleRow:@"characters" title:@"角色" detail:@"包含队友" card:targets];[self separator:targets];
+    UIStackView *targets=[self card:@"目标类型" subtitle:@"真人敌人红色，人机黄色。队伍或类型尚未确认时使用橙色，避免误认。"];
+    [self toggleRow:@"characters" title:@"角色" detail:nil card:targets];[self separator:targets];
+    [self toggleRow:@"hide_teammates" title:@"隐藏队友" detail:@"确认同队后隐藏全部标记" card:targets];[self separator:targets];
     [self toggleRow:@"vehicles" title:@"载具" detail:nil card:targets];[self separator:targets];
     [self toggleRow:@"items" title:@"物资" detail:@"实验性" card:targets];
     UIStackView *labels=[self card:@"标记信息" subtitle:nil];
+    [self toggleRow:@"player_types" title:@"真人 / 人机标签" detail:@"无法确认时显示未知" card:labels];
     for (NSArray *entry in @[@[@"names",@"姓名"],@[@"distances",@"距离"],@[@"health",@"血量数值"],@[@"health_bars",@"血量条"]]) {
         if (labels.arrangedSubviews.count) [self separator:labels];
         [self toggleRow:entry[0] title:entry[1] detail:nil card:labels];
@@ -225,9 +227,9 @@ static UIColor *NSPCardColor(void) {return [UIColor colorWithRed:0.075 green:0.1
     [memory addArrangedSubview:self.memoryStatus];
     self.memoryButton=[self button:@"运行权限验证" symbol:@"checkmark.shield" action:@selector(checkMemory) primary:NO];[memory addArrangedSubview:self.memoryButton];
     UIStackView *about=[self card:@"版本与适配" subtitle:nil];about.spacing=10;
-    [about addArrangedSubview:[self label:[NSString stringWithFormat:@"NSP Pro %@\nNEW STATE 0.9.98（804）\niPhone 15 Pro Max · iOS 17.0 · TrollStore",NSPVersion]
+    [about addArrangedSubview:[self label:[NSString stringWithFormat:@"NSP Pro %@\nNEW STATE 0.9.98（804）\n目标范围 <3000 米 · 相机三维距离\niPhone 15 Pro Max · iOS 17.0 · TrollStore",NSPVersion]
         size:14 weight:UIFontWeightMedium color:UIColor.labelColor]];
-    [about addArrangedSubview:[self label:@"普通个人证书签名无法提供本工具所需权限。\n自瞄、内存修改、队伍区分与检测屏蔽尚未实现。"
+    [about addArrangedSubview:[self label:@"普通个人证书签名无法提供本工具所需权限。\n自瞄、内存修改与检测屏蔽尚未实现。"
         size:12 weight:UIFontWeightRegular color:UIColor.secondaryLabelColor]];
     [about addArrangedSubview:[self button:@"查看发布记录" symbol:@"arrow.up.right.square" action:@selector(openReleases) primary:NO]];
     [self.content addArrangedSubview:[self label:@"HUD 启动与窗口托管参考 Lessica/TrollSpeed（MIT）。许可随安装包提供。"
@@ -251,7 +253,7 @@ static UIColor *NSPCardColor(void) {return [UIColor colorWithRed:0.075 green:0.1
     if (preset<0) return;
     [self.settings addEntriesFromDictionary:@{@"characters":@YES,@"vehicles":@(preset>0),@"items":@NO,
         @"names":@(preset>0),@"distances":@YES,@"health":@(preset==2),@"health_bars":@(preset>0),
-        @"boxes":@YES,@"lines":@(preset==2),@"edge_indicators":@(preset==2),@"crosshair":@YES,@"skeletons":@NO,@"hud_status":@NO}];
+        @"boxes":@YES,@"lines":@(preset==2),@"edge_indicators":@(preset==2),@"crosshair":@YES,@"skeletons":@NO,@"hud_status":@NO,@"hide_teammates":@YES,@"player_types":@YES}];
     for (NSString *key in self.toggles) [self.toggles[key] setOn:[self.settings[key] boolValue] animated:YES];
     [self save];UIAccessibilityPostNotification(UIAccessibilityAnnouncementNotification,@"显示预设已应用");
 }
@@ -277,8 +279,9 @@ static UIColor *NSPCardColor(void) {return [UIColor colorWithRed:0.075 green:0.1
     else self.statusDetail.text=@"点击启动后，返回游戏使用所选显示功能。";
     NSDictionary *counts=report[@"marker_counts"],*performance=report[@"performance"];
     if (running && [report[@"sampling"] boolValue]) {
-        self.metrics.text=[NSString stringWithFormat:@"角色 %@  ·  载具 %@  ·  物资 %@\n最近采样 %.1f ms  /  调度目标 30 Hz",
-            counts[@"characters"]?:@0,counts[@"vehicles"]?:@0,counts[@"items"]?:@0,[performance[@"read_ms"] doubleValue]];
+        self.metrics.text=[NSString stringWithFormat:@"真人 %@ · 人机 %@ · 未知 %@\n载具 %@ · 隐藏队友 %@ · 移除死亡 %@\n最近采样 %.1f ms / 调度目标 60 Hz",
+            counts[@"humans"]?:@0,counts[@"bots"]?:@0,counts[@"unknown"]?:@0,counts[@"vehicles"]?:@0,
+            report[@"affiliation"][@"teammates_hidden"]?:@0,report[@"affiliation"][@"dead_hidden"]?:@0,[performance[@"read_ms"] doubleValue]];
     } else self.metrics.text=@"";
     self.startButton.enabled=!self.startingHUD;
     UIButtonConfiguration *configuration=[self.startButton.configuration copy];
@@ -319,6 +322,13 @@ static UIColor *NSPCardColor(void) {return [UIColor colorWithRed:0.075 green:0.1
         [checks addObject:name];if (!passed) [failures addObject:name];
     };
     NSDictionary *original=[self.settings copy];
+    nsport::Marker marker;marker.relation=nsport::Relation::enemy;marker.playerKind=nsport::PlayerKind::human;
+    check([NSPCharacterColor(marker) isEqual:UIColor.systemRedColor] && [NSPPlayerType(marker) isEqualToString:@"真人"],@"human enemy labels and rays use red");
+    marker.playerKind=nsport::PlayerKind::bot;
+    check([NSPCharacterColor(marker) isEqual:UIColor.systemYellowColor] && [NSPPlayerType(marker) isEqualToString:@"人机"],@"bot labels and rays use yellow");
+    marker.relation=nsport::Relation::unknown;
+    check([NSPCharacterColor(marker) isEqual:UIColor.systemOrangeColor] && [NSPPlayerType(marker) containsString:@"队伍未知"],@"unknown affiliation is not colored as a confirmed enemy");
+    check([self.settings[@"hide_teammates"] boolValue] && [self.settings[@"player_types"] boolValue],@"upgrade defaults enable teammate filtering and type labels");
     NSPWriteJSON(@"settings.json",@{@"sampling":@YES,@"boxes":NSNull.null,@"orientation":@99,@"label_scale":@9,@"overlay_opacity":@0,@"line_width":@"invalid"});
     NSDictionary *normalized=NSPSettings();
     check([normalized[@"sampling"] boolValue] && [normalized[@"boxes"] boolValue] &&
@@ -363,6 +373,7 @@ static UIColor *NSPCardColor(void) {return [UIColor colorWithRed:0.075 green:0.1
     [self startHUD];[self stopHUD];
     check(!self.startingHUD && [NSPReadJSON(@"launch.json")[@"phase"] isEqualToString:@"stop_requested"],@"stop cancels a pending start before any helper spawn");
     [NSFileManager.defaultManager removeItemAtPath:NSPPath(@"launch.json") error:nil];[self refresh];
+    [NSFileManager.defaultManager removeItemAtPath:NSPPath(@"status.json") error:nil];[self refresh];
     NSPWriteJSON(@"ui-smoke.json",@{@"passed":@(failures.count==0),@"checks":checks,@"failures":failures,
         @"scope":@"Simulator controller UI only; no game or device permissions tested"});
 }

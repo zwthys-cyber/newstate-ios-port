@@ -141,6 +141,8 @@ static void completeReadPipeline() {
     f.set(target+8,encoded(level));f.set(level+0x178,world);f.set(target+0x278,root);f.set(root+0x150,Vec3{1000,100,0});
     f.set(target+0x22f8,75.0f);f.set(target+0x6dc,100.0f);f.set(target+0x350,encoded(capsule));f.set(capsule+0x534,88.0f);
     f.set(target+0x2c0,encoded(state));f.set(state+0x358,nameData);f.set(state+0x360,int32_t(6));f.set(state+0x364,int32_t(6));
+    f.set(pawn+0x30,encoded(uint64_t(0x400005000)));
+    f.set(pawn+0xc04,std::array<int32_t,2>{10,0});f.set(target+0xc04,std::array<int32_t,2>{11,1});
     std::array<char16_t,6> testName{u'测',u'试',u'B',u'o',u't',0};f.set(nameData,testName);
     Memory memory{&f,Fake::read,base};Sampler sampler(memory);
     auto out=sampler.sample();
@@ -148,6 +150,7 @@ static void completeReadPipeline() {
     assert(out.markers.size()==1 && out.markers[0].kind==Kind::character && out.markers[0].hasHealth);
     assert(out.markers[0].health==75 && out.markers[0].maximum==100 && out.markers[0].halfHeight==88);
     assert(out.markers[0].playerName==u"测试Bot");
+    assert(out.localTeamKnown && out.markers[0].relation==Relation::enemy && out.markers[0].playerKind==PlayerKind::human);
     // Fast samples retain labels but read fresh position/camera and reject destroyed objects.
     size_t slowReads=f.reads;
     SampleOptions fast;fast.details=false;fast.discoveryBudget=0;fast.kinds=1;
@@ -161,6 +164,32 @@ static void completeReadPipeline() {
     assert(moving.camera.rotation.y==90 && moving.markers[0].playerName==u"测试Bot");
     assert(f.reads-before<slowReads);
     f.beforeRead={};
+    // Health, team affiliation and bot classification must not wait for cached name refresh.
+    f.set(target+0x22f8,42.0f);f.set(state+0x2b8,uint8_t(8));moving=sampler.sample(fast);
+    assert(moving.markers.size()==1 && moving.markers[0].health==42 && moving.markers[0].playerKind==PlayerKind::bot);
+    f.set(target+0xc04,std::array<int32_t,2>{10,1});moving=sampler.sample(fast);
+    assert(moving.markers.empty() && moving.teammatesHidden==1);
+    fast.hideTeammates=false;moving=sampler.sample(fast);
+    assert(moving.markers.size()==1 && moving.markers[0].relation==Relation::teammate);
+    fast.hideTeammates=true;f.set(target+0xc04,std::array<int32_t,2>{11,1});
+    f.set(pawn+0xc04,std::array<int32_t,2>{-1,-1});moving=sampler.sample(fast);
+    assert(!moving.localTeamKnown && moving.markers.size()==1 && moving.markers[0].relation==Relation::unknown);
+    f.set(pawn+0xc04,std::array<int32_t,2>{0,0});f.set(target+0xc04,std::array<int32_t,2>{0,1});moving=sampler.sample(fast);
+    assert(moving.markers.empty() && moving.teammatesHidden==1); // team zero is valid; -1 is invalid
+    f.set(pawn+0xc04,std::array<int32_t,2>{10,0});f.set(target+0xc04,std::array<int32_t,2>{11,1});
+    f.set(state+0x30,encoded(0));moving=sampler.sample(fast);
+    assert(moving.markers.size()==1 && moving.markers[0].playerKind==PlayerKind::unknown && moving.markers[0].playerName.empty());
+    f.set(state+0x30,encoded(uint64_t(0x400007000)));f.set(state+0x2b8,uint8_t(0));
+    f.set(target+0x22f8,0.0f);moving=sampler.sample(fast);
+    assert(moving.markers.size()==1 && moving.markers[0].health==0); // zero HP can be downed; never infer death from HP alone
+    f.set(target+0x22f8,NAN);moving=sampler.sample(fast);assert(moving.markers.size()==1 && !moving.markers[0].hasHealth);
+    f.set(target+0x22f8,75.0f);
+    auto targetBytes=std::move(f.regions[target]);f.regions.erase(target);moving=sampler.sample(fast);
+    assert(moving.markers.empty() && moving.stateUnreadable==1);
+    f.regions[target]=std::move(targetBytes);f.set(target+0x930,uint8_t(1));moving=sampler.sample(fast);
+    assert(moving.markers.empty() && moving.deadHidden==1);
+    out=sampler.sample();assert(out.markers.empty()); // dead object must not be rediscovered as live
+    f.set(target+0x930,uint8_t(0));out=sampler.sample();assert(out.markers.size()==1); // same actor can respawn
     f.set(chunk+24+16,uint32_t(0x20000000));moving=sampler.sample(fast);assert(moving.markers.empty());
     f.set(chunk+24+16,uint32_t(0));f.set(root+0x150,Vec3{1000,100,0});f.set(camera+0x1bac,Vec3{0,0,0});
     out=sampler.sample();assert(out.markers.size()==1);
@@ -168,6 +197,21 @@ static void completeReadPipeline() {
     f.set(state+0x2b8,uint8_t(0));f.set(state+0x360,int32_t(300));out=sampler.sample();assert(out.markers[0].playerName.empty());
     f.set(state+0x360,int32_t(6));testName.back()=u'X';f.set(nameData,testName);out=sampler.sample();assert(out.markers[0].playerName.empty());
     testName.back()=0;f.set(nameData,testName);
+    // PlayerArray bypasses the object-table discovery cursor, while still checking GUObjectArray identity.
+    constexpr uint64_t gameState=0x300100000,gameStateClass=0x400020000,players=0x300110000;
+    f.allocate(gameState,0x400);f.allocate(gameStateClass,0x100);f.allocate(players,16);
+    f.allocate(base+0x809ae70,8);f.set(base+0x809ae70,gameStateClass);f.set(gameState+0x30,encoded(gameStateClass));
+    f.set(world+0x148,gameState);f.set(gameState+0x2c8,players);f.set(gameState+0x2d0,int32_t(1));f.set(gameState+0x2d4,int32_t(1));
+    f.set(players,state);f.set(state+0x368,target);
+    auto indexWords=weak(0,1);f.set(target+0x20,std::array<uint32_t,3>{indexWords[3],indexWords[4],indexWords[5]});
+    SampleOptions direct;direct.discoveryBudget=0;Sampler immediate(memory);auto found=immediate.sample(direct);
+    assert(found.markers.size()==1 && found.playerArrayAvailable && found.playersChecked==1 && found.playersDiscovered==1 && found.scanned==0);
+    indexWords=weak(0,0);f.set(target+0x20,std::array<uint32_t,3>{indexWords[3],indexWords[4],indexWords[5]});
+    Sampler mismatched(memory);found=mismatched.sample(direct);assert(found.markers.empty());
+    indexWords=weak(0,1);f.set(target+0x20,std::array<uint32_t,3>{indexWords[3],indexWords[4],indexWords[5]});
+    f.set(root+0x150,Vec3{300000,0,0});Sampler far(memory);found=far.sample(direct);assert(found.markers.empty());
+    f.set(root+0x150,Vec3{299999,0,0});Sampler within(memory);found=within.sample(direct);assert(found.markers.size()==1);
+    f.set(root+0x150,Vec3{1000,100,0});
     // Objects being destroyed must disappear from previously cached candidates.
     f.set(chunk+24+16,uint32_t(0x20000000));out=sampler.sample();assert(out.cameraReady && out.markers.empty());
     f.set(chunk+24+16,uint32_t(0));f.set(level+0x178,uint64_t(world+0x8000));
@@ -233,5 +277,5 @@ static void skeletonReader() {
 }
 int main() {
     crypto();projection();healthAndEdgeIndicators();objectLifecycle();inheritanceAndUnreadableMemory();completeReadPipeline();skeletonReader();
-    std::cout<<"PASS: decode; projection and edge direction/bounds/behind/yaw/invalid inputs; health validation; weak-object lifecycle; synthetic pipeline; fresh motion/camera with cached labels and fewer reads; skeleton transforms/buffers/leader-remap\n";
+    std::cout<<"PASS: decode; projection/edges; fresh health/team/bot/death state without metadata refresh; unknown classification; zero-HP downed actor; unreadable/dead/destructed removal and respawn; guarded PlayerArray discovery without global traversal; strict 3000m range; fresh motion/camera with cached labels and fewer reads; skeleton transforms/buffers/leader-remap\n";
 }

@@ -17,7 +17,7 @@
 extern char **environ;
 static NSString *NSPFolder;
 static NSString *const NSPStop=@"org.newstateport.external.stop";
-static NSString *const NSPVersion=@"0.3.0";
+static NSString *const NSPVersion=@"0.3.1";
 #ifdef NSP_UI_PREVIEW
 static NSString *const NSPStorage=@"";
 #else
@@ -92,7 +92,8 @@ static NSDictionary *NSPDefaults(void) {
     return @{@"sampling":@NO,@"characters":@YES,@"vehicles":@YES,@"items":@NO,
         @"boxes":@YES,@"lines":@NO,@"health":@YES,@"distances":@YES,@"names":@YES,
         @"crosshair":@YES,@"skeletons":@NO,@"orientation":@0,@"edge_indicators":@NO,@"health_bars":@YES,@"hud_status":@NO,
-        @"label_scale":@1.0,@"overlay_opacity":@1.0,@"line_width":@1.2};
+        @"label_scale":@1.0,@"overlay_opacity":@1.0,@"line_width":@1.2,
+        @"hide_teammates":@YES,@"player_types":@YES};
 }
 static NSDictionary *NSPSettings(void) {
     NSMutableDictionary *settings=[NSPDefaults() mutableCopy];
@@ -149,6 +150,18 @@ static CGRect NSPScreenBounds(void) {
     return UIScreen.mainScreen.bounds;
 #pragma clang diagnostic pop
 }
+static UIColor *NSPCharacterColor(const nsport::Marker &marker) {
+    if (marker.relation==nsport::Relation::teammate) return UIColor.systemGreenColor;
+    if (marker.relation==nsport::Relation::unknown) return UIColor.systemOrangeColor;
+    if (marker.playerKind==nsport::PlayerKind::human) return UIColor.systemRedColor;
+    if (marker.playerKind==nsport::PlayerKind::bot) return UIColor.systemYellowColor;
+    return UIColor.systemOrangeColor;
+}
+static NSString *NSPPlayerType(const nsport::Marker &marker) {
+    if (marker.relation==nsport::Relation::teammate) return @"队友";
+    NSString *type=marker.playerKind==nsport::PlayerKind::bot ? @"人机" : marker.playerKind==nsport::PlayerKind::human ? @"真人" : @"未知";
+    return marker.relation==nsport::Relation::unknown ? [type stringByAppendingString:@"·队伍未知"] : type;
+}
 
 @interface NSPCanvas : UIView
 @property(nonatomic) std::shared_ptr<nsport::Snapshot> snapshot;
@@ -181,9 +194,10 @@ static CGRect NSPScreenBounds(void) {
     if (!snapshot || !snapshot->cameraReady || ![o[@"sampling"] boolValue]) return;
     for (const auto &marker:snapshot->markers) {
         if (marker.kind==nsport::Kind::character && ![o[@"characters"] boolValue]) continue;
+        if (marker.kind==nsport::Kind::character && marker.relation==nsport::Relation::teammate && [o[@"hide_teammates"] boolValue]) continue;
         if (marker.kind==nsport::Kind::vehicle && ![o[@"vehicles"] boolValue]) continue;
         if (marker.kind==nsport::Kind::item && ![o[@"items"] boolValue]) continue;
-        UIColor *color=marker.kind==nsport::Kind::character ? UIColor.systemYellowColor :
+        UIColor *color=marker.kind==nsport::Kind::character ? NSPCharacterColor(marker) :
             marker.kind==nsport::Kind::vehicle ? UIColor.systemCyanColor : UIColor.systemGreenColor;
         nsport::Point p;
         if (!nsport::project(marker.position,snapshot->camera,(float)width,(float)height,p) ||
@@ -235,6 +249,10 @@ static CGRect NSPScreenBounds(void) {
             if (value.length) name=value;
         }
         NSMutableString *label=[name mutableCopy];
+        if (marker.kind==nsport::Kind::character && [o[@"player_types"] boolValue]) {
+            NSString *type=NSPPlayerType(marker);
+            label=[name isEqualToString:@"角色"] ? [type mutableCopy] : [NSMutableString stringWithFormat:@"%@ · %@",type,name];
+        }
         if ([o[@"distances"] boolValue]) [label appendFormat:@" %.0fm",nsport::distance(marker.position,snapshot->camera.position)/100];
         if ([o[@"health"] boolValue] && marker.hasHealth) [label appendFormat:@" %.0f/%.0f",marker.health,marker.maximum];
         [label drawAtPoint:CGPointMake(p.x+5,p.y+3) withAttributes:@{
@@ -267,7 +285,7 @@ static CGRect NSPScreenBounds(void) {
     BOOL _busy;
     NSTimeInterval _lastReport;
     NSString *_lastStatus;
-    NSTimeInterval _lastSettingsLoad,_lastReadStart;
+    NSTimeInterval _lastSettingsLoad,_lastReadStart,_lastFrameReceived;
 }
 @property(nonatomic,strong) UIWindow *window;
 @property(nonatomic,strong) NSPCanvas *canvas;
@@ -305,7 +323,7 @@ static void NSPStopCallback(CFNotificationCenterRef center,void *observer,CFStri
     call.target=self.host;call.selector=selector;[call setArgument:&context atIndex:2];[call setArgument:&level atIndex:3];[call invoke];
     _queue=dispatch_queue_create("org.newstateport.external.read",DISPATCH_QUEUE_SERIAL);
     __weak NSPHUDDelegate *weak=self;
-    self.timer=[NSTimer scheduledTimerWithTimeInterval:1.0/30.0 repeats:YES block:^(NSTimer *timer) {
+    self.timer=[NSTimer scheduledTimerWithTimeInterval:1.0/60.0 repeats:YES block:^(NSTimer *timer) {
         (void)timer;[weak tick];
     }];
     [self tick];return YES;
@@ -327,9 +345,13 @@ static void NSPStopCallback(CFNotificationCenterRef center,void *observer,CFStri
         self.canvas.snapshot=nullptr;self.canvas.status=@"悬浮层已启动 · 游戏读取关闭";[self.canvas setNeedsDisplay];
         [self report:self.canvas.status extra:@{@"sampling":@NO,@"hosting_call_returned":@YES}];return;
     }
-    if (_busy) return;
+    if (_busy) {
+        if (uptime-_lastFrameReceived>0.25) {self.canvas.snapshot=nullptr;[self.canvas setNeedsDisplay];}
+        return;
+    }
     _busy=YES;BOOL skeleton=[settings[@"skeletons"] boolValue];
     nsport::SampleOptions requested;requested.skeletons=skeleton;requested.kinds=0;
+    requested.hideTeammates=[settings[@"hide_teammates"] boolValue];
     if ([settings[@"characters"] boolValue]) requested.kinds|=1;
     if ([settings[@"vehicles"] boolValue]) requested.kinds|=2;
     if ([settings[@"items"] boolValue]) requested.kinds|=4;
@@ -344,14 +366,17 @@ static void NSPStopCallback(CFNotificationCenterRef center,void *observer,CFStri
             dispatch_async(dispatch_get_main_queue(),^{
                 self->_busy=NO;
                 if (![self.canvas.options[@"sampling"] boolValue]) return;
-                self.canvas.snapshot=result.snapshot;
-                self.canvas.status=[NSString stringWithUTF8String:result.status.c_str()];
+                self->_lastFrameReceived=NSProcessInfo.processInfo.systemUptime;
+                BOOL expired=self->_lastFrameReceived-start>0.25;
+                self.canvas.snapshot=expired ? nullptr : result.snapshot;
+                self.canvas.status=expired ? @"采样结果已过期，等待更新" : [NSString stringWithUTF8String:result.status.c_str()];
                 [self.canvas setNeedsDisplay];
                 NSMutableDictionary *extra=[@{@"sampling":@YES,@"target_pid":@(result.pid),
                     @"read_port_acquired":@(result.readPort),@"read_error":@(result.error),
                     @"hosting_call_returned":@YES} mutableCopy];
                 extra[@"performance"]=@{@"read_ms":@(elapsed),@"sample_interval_ms":@(interval),
-                    @"target_hz":@30,@"discovery_budget":@256,@"details_refreshed":@(result.detailsRefreshed)};
+                    @"target_hz":@60,@"discovery_budget":@512,@"player_discovery_budget":@32,
+                    @"details_refreshed":@(result.detailsRefreshed),@"snapshot_expired":@(expired)};
                 if (!result.images.stage.empty()) {
                     NSMutableArray *uuids=[NSMutableArray array];
                     for (const auto &uuid:result.images.executableUUIDs) [uuids addObject:[NSString stringWithUTF8String:uuid.c_str()]];
@@ -368,19 +393,29 @@ static void NSPStopCallback(CFNotificationCenterRef center,void *observer,CFStri
                         @"copied_read_size":@(result.copiedReadSize),@"vm_read_error":@(result.error)};
                 }
                 if (result.snapshot) {
-                    extra[@"camera_ready"]=@(result.snapshot->cameraReady);extra[@"markers"]=@(result.snapshot->markers.size());
+                    extra[@"affiliation"]=@{@"local_team_known":@(result.snapshot->localTeamKnown),
+                        @"teammates_hidden":@(result.snapshot->teammatesHidden),@"dead_hidden":@(result.snapshot->deadHidden),
+                        @"state_unreadable":@(result.snapshot->stateUnreadable)};
+                    extra[@"discovery"]=@{@"player_array_available":@(result.snapshot->playerArrayAvailable),
+                        @"players_checked":@(result.snapshot->playersChecked),@"players_discovered":@(result.snapshot->playersDiscovered)};
+                    extra[@"camera_ready"]=@(result.snapshot->cameraReady && !expired);extra[@"markers"]=@(expired ? 0 : result.snapshot->markers.size());
                     extra[@"scanned"]=@(result.snapshot->scanned);extra[@"objects"]=@(result.snapshot->total);
-                    size_t characters=0,vehicles=0,items=0,health=0,skeletons=0,bones=0;
+                    size_t characters=0,vehicles=0,items=0,health=0,skeletons=0,bones=0,humans=0,bots=0,unknown=0;
                     for (const auto &marker:result.snapshot->markers) {
+                        if (expired) break;
                         if (marker.kind==nsport::Kind::character) {
                             ++characters;if (marker.hasHealth) ++health;
+                            if (marker.playerKind==nsport::PlayerKind::human) ++humans;
+                            else if (marker.playerKind==nsport::PlayerKind::bot) ++bots;
+                            else ++unknown;
                             if (!marker.bones.empty()) ++skeletons;
                             bones+=marker.bones.size();
                         } else if (marker.kind==nsport::Kind::vehicle) ++vehicles;
                         else if (marker.kind==nsport::Kind::item) ++items;
                     }
                     extra[@"marker_counts"]=@{@"characters":@(characters),@"vehicles":@(vehicles),@"items":@(items),
-                        @"health_readable":@(health),@"skeletons_readable":@(skeletons),@"bone_segments":@(bones)};
+                        @"health_readable":@(health),@"skeletons_readable":@(skeletons),@"bone_segments":@(bones),
+                        @"humans":@(humans),@"bots":@(bots),@"unknown":@(unknown)};
                     extra[@"skeleton_sampling_enabled"]=@(skeleton);
                 }
                 [self report:self.canvas.status extra:extra];

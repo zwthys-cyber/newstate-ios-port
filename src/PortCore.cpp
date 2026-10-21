@@ -20,6 +20,15 @@ bool objectIsA(const Memory &m, uint64_t object, uint64_t singleton) {
 struct Item { uint64_t reserved, object; uint32_t flags; int32_t serial; };
 static_assert(sizeof(Item) == 24);
 struct Array { uint64_t data; int32_t count, capacity; };
+struct MemberInfo {int32_t team{-1},member{-1};};
+bool validMember(MemberInfo value) {return value.team>=0 && value.member>=0;}
+bool memberInfo(const Memory &m,uint64_t actor,MemberInfo &out) {
+    // XtrmCharacter.MemberInfo is FTeamMemberInfo { int32 TeamNumber, MyNumber }.
+    return objectIsA(m,actor,0x7f2c5b0) && m.get(actor+0xc04,out) && validMember(out);
+}
+bool stateMemberInfo(const Memory &m,uint64_t state,MemberInfo &out) {
+    return objectIsA(m,state,0x7f45ac8) && m.get(state+0xba4,out) && validMember(out);
+}
 bool arrayValid(Array a, int32_t limit) {
     return a.count >= 0 && a.count <= limit && a.capacity >= a.count && a.capacity <= limit;
 }
@@ -226,6 +235,63 @@ bool Sampler::position(uint64_t actor,Vec3 &out) const {
     return root && memory.get(root+0x150,out) && finite(out) &&
         std::abs(out.x)<1e8 && std::abs(out.y)<1e8 && std::abs(out.z)<1e8;
 }
+void Sampler::admit(Snapshot &out,const SampleOptions &options,uint64_t object,uint64_t item,int32_t serial,Kind category) {
+    if (!(options.kinds&(1U<<(static_cast<unsigned>(category)-1))) || object==out.pawn) return;
+    if (std::any_of(candidates.begin(),candidates.end(),[&](const Candidate &c){return c.object==object;})) return;
+    if (!inWorld(object,out.world)) return;
+    if (category==Kind::character) {
+        uint8_t dying{};
+        if (!memory.get(object+0x930,dying) || (dying&1)) return;
+    }
+    Vec3 location;if (!position(object,location)) return;
+    float range=distance(location,out.camera.position);if (range>=300000) return;
+    size_t limit=category==Kind::vehicle ? 128 : 256;
+    size_t count=size_t(std::count_if(candidates.begin(),candidates.end(),[&](const Candidate &c){return c.kind==category;}));
+    Candidate incoming{object,item,serial,category,range,{},false};
+    if (count<limit) candidates.push_back(incoming);
+    else {
+        auto farthest=candidates.end();
+        for (auto candidate=candidates.begin();candidate!=candidates.end();++candidate)
+            if (candidate->kind==category && (farthest==candidates.end() || candidate->distance>farthest->distance)) farthest=candidate;
+        if (farthest!=candidates.end() && farthest->distance>range) *farthest=incoming;
+    }
+}
+void Sampler::discoverPlayers(Snapshot &out,const SampleOptions &options) {
+    if (!(options.kinds&1) || !options.playerDiscoveryBudget) return;
+    uint64_t gameState=memory.pointer(out.world+0x148);
+    Array players{};int32_t objectTotal{};
+    if (!objectIsA(memory,gameState,0x809ae70) || !memory.get(gameState+0x2c8,players) ||
+        !arrayValid(players,2048) || !memory.get(memory.base+objectCount,objectTotal) ||
+        objectTotal<0 || uint32_t(objectTotal)>maximumObjects) return;
+    out.playerArrayAvailable=true;
+    if (!players.count) {playerCursor=0;return;}
+    if (playerCursor>=uint32_t(players.count)) playerCursor=0;
+    uint32_t count=std::min({options.playerDiscoveryBudget,64U,uint32_t(players.count)-playerCursor});
+    std::array<uint64_t,64> states{};
+    if (!memory.bytes(players.data+uint64_t(playerCursor)*8,states.data(),size_t(count)*8)) return;
+    uint64_t table=memory.pointer(memory.base+objectChunks);
+    if (!table) return;
+    for (uint32_t i=0;i<count;++i) {
+        ++out.playersChecked;
+        uint64_t state=states[i];
+        if (!objectIsA(memory,state,0x80adb20)) continue;
+        uint64_t actor=memory.pointer(state+0x368);
+        if (!actor || actor==out.pawn ||
+            std::any_of(candidates.begin(),candidates.end(),[&](const Candidate &c){return c.object==actor;})) continue;
+        if (classify(objectClass(memory,actor))!=int(Kind::character) || memory.encodedPointer(actor+0x2c0)!=state) continue;
+        // Native UObject validity checks decode +0x20 with XOR/ROR7 before indexing GUObjectArray.
+        // The decoded index is never trusted without matching the actual object and a live serial.
+        std::array<uint32_t,3> encodedIndex{};
+        if (!memory.get(actor+0x20,encodedIndex)) continue;
+        uint32_t index=decodeSerial(encodedIndex);if (index>=uint32_t(objectTotal)) continue;
+        uint64_t chunk=memory.pointer(table+uint64_t(index>>16)*8);
+        uint64_t itemAddress=chunk+uint64_t(index&0xffff)*sizeof(Item);Item item{};
+        if (!chunk || !memory.get(itemAddress,item) || item.object!=actor || !item.serial || (item.flags&0x30000000)) continue;
+        size_t before=candidates.size();admit(out,options,actor,itemAddress,item.serial,Kind::character);
+        if (candidates.size()>before) ++out.playersDiscovered;
+    }
+    playerCursor+=count;
+}
 void Sampler::discover(Snapshot &out,const SampleOptions &options) {
     int32_t count{};
     if (!memory.get(memory.base+objectCount,count) || count<0 || uint32_t(count)>maximumObjects) {
@@ -246,24 +312,7 @@ void Sampler::discover(Snapshot &out,const SampleOptions &options) {
                 const auto &it=items[i];
                 if (!it.object || !it.serial || (it.flags&0x30000000)) continue;
                 int kind=classify(objectClass(memory,it.object));
-                if (!kind || !(options.kinds&(1U<<(kind-1))) || it.object==out.pawn || !inWorld(it.object,out.world)) continue;
-                bool exists=std::any_of(candidates.begin(),candidates.end(),[&](const Candidate &c){return c.object==it.object;});
-                if (exists) continue;
-                Vec3 location;
-                if (!position(it.object,location)) continue;
-                float range=distance(location,out.camera.position);
-                if (range>=300000) continue;
-                Kind category=Kind(kind);
-                size_t limit=category==Kind::vehicle ? 128 : 256;
-                size_t countInKind=size_t(std::count_if(candidates.begin(),candidates.end(),[&](const Candidate &c){return c.kind==category;}));
-                Candidate incoming{it.object,itemAddress+i*sizeof(Item),it.serial,category,range,{},false};
-                if (countInKind<limit) candidates.push_back(incoming);
-                else {
-                    auto farthest=candidates.end();
-                    for (auto candidate=candidates.begin();candidate!=candidates.end();++candidate)
-                        if (candidate->kind==category && (farthest==candidates.end() || candidate->distance>farthest->distance)) farthest=candidate;
-                    if (farthest!=candidates.end() && farthest->distance>range) *farthest=incoming;
-                }
+                if (kind) admit(out,options,it.object,itemAddress+i*sizeof(Item),it.serial,Kind(kind));
             }
         }
         cursor+=take; work-=take;
@@ -283,7 +332,7 @@ Snapshot Sampler::sample(const SampleOptions &options) {
     if (!objectIsA(memory,viewport,0x809b590)) return out;
     out.world=memory.pointer(viewport+0x1f8);
     if (!objectIsA(memory,out.world,0x80b74f0)) {out.status="等待游戏世界";return out;}
-    if (out.world!=lastWorld) {candidates.clear();classKinds.clear();cursor=0;lastWorld=out.world;}
+    if (out.world!=lastWorld) {candidates.clear();classKinds.clear();cursor=playerCursor=0;lastWorld=out.world;}
     Array controllers{};
     if (!memory.get(out.world+0x230,controllers) || !arrayValid(controllers,4096)) return out;
     for (int32_t i=0;i<controllers.count && i<16;++i) {
@@ -303,7 +352,12 @@ Snapshot Sampler::sample(const SampleOptions &options) {
     if (!readCamera(memory,out.cameraObject,c)) {
         out.status="相机数据未通过校验";return out;
     }
-    out.cameraReady=true; out.status="只读采样中（角色包含队友）";
+    out.cameraReady=true;out.status="只读采样中";
+    MemberInfo local;
+    out.localTeamKnown=memberInfo(memory,out.pawn,local);
+    if (!out.localTeamKnown) out.localTeamKnown=stateMemberInfo(memory,memory.encodedPointer(out.controller+0x290),local);
+    if (!out.localTeamKnown) out.status+=" · 队伍未就绪";
+    discoverPlayers(out,options);
     discover(out,options);
     auto it=candidates.begin();
     while (it!=candidates.end()) {
@@ -313,13 +367,29 @@ Snapshot Sampler::sample(const SampleOptions &options) {
         if (!memory.get(it->item,current) || current.object!=it->object || current.serial!=it->serial ||
             (current.flags&0x30000000) || (details && !inWorld(it->object,out.world))) {it=candidates.erase(it);continue;}
         Marker marker=it->details;marker.object=it->object;marker.kind=it->kind;
+        if (marker.kind==Kind::character) {
+            uint8_t dying{};
+            if (!memory.get(marker.object+0x930,dying)) {++out.stateUnreadable;++it;continue;}
+            if (dying&1) {++out.deadHidden;it=candidates.erase(it);continue;}
+            MemberInfo target;
+            marker.relation=Relation::unknown;
+            if (out.localTeamKnown && memberInfo(memory,marker.object,target))
+                marker.relation=local.team==target.team ? Relation::teammate : Relation::enemy;
+            if (options.hideTeammates && marker.relation==Relation::teammate) {++out.teammatesHidden;++it;continue;}
+            uint64_t state=memory.encodedPointer(marker.object+0x2c0);
+            if (!objectIsA(memory,state,0x80adb20)) state=0;
+            if (state!=marker.playerState) {marker.playerName.clear();details=true;}
+            marker.playerState=state;marker.playerKind=PlayerKind::unknown;
+            uint8_t flags{};
+            if (state && memory.get(state+0x2b8,flags)) marker.playerKind=(flags&8) ? PlayerKind::bot : PlayerKind::human;
+            float fraction{};marker.health=marker.maximum=0;
+            marker.hasHealth=memory.get(marker.object+0x22f8,marker.health) && memory.get(marker.object+0x6dc,marker.maximum) &&
+                healthFraction(marker.health,marker.maximum,fraction);
+        }
         if (position(it->object,marker.position) && distance(marker.position,c.position)<300000) {
             it->distance=distance(marker.position,c.position);
             if (marker.kind==Kind::character && details) {
                 marker.playerName=playerName(memory,marker.object);
-                float fraction{};
-                marker.hasHealth=memory.get(marker.object+0x22f8,marker.health) && memory.get(marker.object+0x6dc,marker.maximum) &&
-                    healthFraction(marker.health,marker.maximum,fraction);
                 marker.halfHeight=0;uint64_t capsule=memory.encodedPointer(marker.object+0x350);
                 if (capsule) memory.get(capsule+0x534,marker.halfHeight);
                 if (!std::isfinite(marker.halfHeight) || marker.halfHeight<10 || marker.halfHeight>300) marker.halfHeight=0;
