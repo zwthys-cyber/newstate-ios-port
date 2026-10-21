@@ -135,7 +135,45 @@ static void completeReadPipeline() {
     f.set(camera+0x1bc0,90.0f);f.set(chunk+20,int32_t(999));
     out=sampler.sample();assert(!out.cameraReady && out.controller==0);
 }
+static void skeletonReader() {
+    struct Transform {float q[4];Vec3 translation,scale;float padding[2];};
+    struct Bone {uint32_t name,number;int32_t parent;};
+    static_assert(sizeof(Transform)==48 && sizeof(Bone)==12);
+    Fake f;constexpr uint64_t base=0x100000000,mesh=0x500000000,asset=0x500010000;
+    constexpr uint64_t infos=0x500020000,poses=0x500030000,cl=0x600000000;
+    for (uint64_t a:{mesh,asset,infos,poses,cl}) f.allocate(a,0x1000);
+    f.allocate(base+0x80b2008,8);f.set(base+0x80b2008,cl);f.set(mesh+0x30,encoded(cl));
+    f.set(mesh+0x84,uint8_t(1));f.set(mesh+0x600,asset);
+    f.set(asset+0x1b0,infos);f.set(asset+0x1b8,int32_t(3));f.set(asset+0x1bc,int32_t(3));
+    std::array<Bone,3> bones{{{1,0,-1},{2,0,0},{3,0,1}}};f.set(infos,bones);
+    f.set(mesh+0x678,poses);f.set(mesh+0x680,int32_t(3));f.set(mesh+0x684,int32_t(3));
+    Transform world{{0,0,0.70710678f,0.70710678f},{100,200,300},{2,1,1},{0,0}};
+    f.set(mesh+0x140,world);
+    for (int i=0;i<3;++i) {
+        Transform bone{{0,0,0,1},{float(10*i),0,0},{1,1,1},{0,0}};
+        f.set(poses+uint64_t(i)*48,bone);
+    }
+    Memory memory{&f,Fake::read,base};auto lines=readSkeleton(memory,mesh,{100,200,300});
+    assert(lines.size()==2 && std::abs(lines[0].from.y-200)<0.01f && std::abs(lines[0].to.y-220)<0.01f);
+    assert(std::abs(lines[1].to.x-100)<0.01f && std::abs(lines[1].to.y-240)<0.01f);
+    f.set(mesh+0x6e8,int32_t(2));assert(readSkeleton(memory,mesh,{100,200,300}).empty());
+    f.set(mesh+0x6e8,int32_t(0));f.set(mesh+0x84,uint8_t(0));assert(readSkeleton(memory,mesh,{100,200,300}).empty());
+    f.set(mesh+0x84,uint8_t(1));bones[2].parent=999;f.set(infos,bones);
+    assert(readSkeleton(memory,mesh,{100,200,300}).size()==1);
+    bones[2].parent=1;f.set(infos,bones);
+    constexpr uint64_t leader=0x500040000,map=0x500050000,table=0x500060000,chunk=0x500070000;
+    for (uint64_t a:{leader,map,table,chunk}) f.allocate(a,0x1000);
+    f.allocate(base+0x8174500,0x100);f.set(base+0x8174520,table);f.set(base+0x8174538,int32_t(1));
+    f.set(table,chunk);f.set(chunk+8,leader);f.set(chunk+20,int32_t(777));f.set(mesh+0x5e8,weak(0,777));
+    f.set(leader+0x30,encoded(cl));f.set(leader+0x84,uint8_t(1));
+    f.set(leader+0x678,poses);f.set(leader+0x680,int32_t(3));f.set(leader+0x684,int32_t(3));
+    f.set(mesh+0x710,map);f.set(mesh+0x718,int32_t(3));f.set(mesh+0x71c,int32_t(3));
+    f.set(map,std::array<int32_t,3>{2,1,0});f.set(mesh+0x678,uint64_t(0));
+    lines=readSkeleton(memory,mesh,{100,200,300});
+    assert(lines.size()==2 && std::abs(lines[0].from.y-240)<0.01f && std::abs(lines[1].to.y-200)<0.01f);
+    f.set(map,std::array<int32_t,3>{2,-1,0});assert(readSkeleton(memory,mesh,{100,200,300}).empty());
+}
 int main() {
-    crypto();projection();objectLifecycle();inheritanceAndUnreadableMemory();completeReadPipeline();
-    std::cout<<"PASS: decode golden vectors; camera projection and invalid input; weak-object serial/lifecycle/bounds; class hierarchy; unreadable memory; complete synthetic world/controller/camera/marker pipeline and invalidation\n";
+    crypto();projection();objectLifecycle();inheritanceAndUnreadableMemory();completeReadPipeline();skeletonReader();
+    std::cout<<"PASS: decode golden vectors; camera projection and invalid input; weak-object serial/lifecycle/bounds; class hierarchy; unreadable memory; synthetic world/controller/camera/marker pipeline and invalidation; skeleton quaternion/scale/parent/buffer/leader-remap handling\n";
 }

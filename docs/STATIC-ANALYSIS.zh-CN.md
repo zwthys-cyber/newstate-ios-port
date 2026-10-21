@@ -48,9 +48,13 @@ PlayerCameraManager 构造函数设置基类虚表 RVA 0x7a9e970；TslPlayerCame
 
 后坐力调查：XtrmWeapon_Gun 的 RecoilScale 属性偏移为 +0xc00，属性类型登记到 Vector2D（8 字节，X/Y 两个浮点）。只证明存在此字段，不证明单独改写能产生预期效果，因此尚未接入写入开关。
 
-骨骼调查：GetBoneName 的原生实现 RVA 0x50eab78 使用 SkinnedMeshComponent +0x600 的 mesh 引用和 mesh +0x1b0 / +0x1b8 的 12 字节骨骼记录数组。尚未确认当前姿态缓冲区及骨骼到世界坐标的完整路径。
+骨骼调查：GetBoneName 的原生实现 RVA 0x50eab78 使用 SkinnedMeshComponent +0x600 的 mesh 引用和 mesh +0x1b0 / +0x1b8 的 12 字节骨骼记录数组。每条记录为 FName 的两个 uint32 及 int32 父索引。
 
-这些调查结果仅用于后续适配，不表示未实现功能已经存在于当前 dylib。
+SkeletalMeshComponent 构造设置虚表 RVA 0x7c6b8e0。其 +0x490 槽对应 GetSocketTransform（RVA 0x50ec878），后者调用 RVA 0x50e86b8 的骨骼变换实现。当前 component-space pose 从组件 +0x678 起的 16 字节数组头中选择，选择索引位于 +0x6e8，记录步长 48。Transform 的 quaternion/translation/scale 分别位于 +0/+0x10/+0x1c，末尾存在填充。
+
+若组件 +0x5e8 的 24 字节弱引用能解析到有效 leader，原生代码使用组件 +0x710 的 int32 重映射表，从 leader 的 pose 缓冲取姿态；组件到世界变换仍使用调用方组件 +0x140。只读实现遵循上述分支，检查注册标志、边界、缓冲头和选中索引稳定性，并以世界变换的四元数和缩放投影骨骼平移值。未调用游戏的 GetSocketTransform 或 GetBoneTransform。效果仍需设备验证。
+
+写入功能的调查结果仅用于后续适配，不表示未实现功能已经存在于当前 dylib。骨架目前已接入实验性只读显示。
 
 原 APK 的资源名为 External Pubg Cheat | Modyolo.com，包名 google.suport.misaki，针对 PUBG Mobile。重新实现的是显示类别和配置概念，不是把 ELF 二进制转换为 Mach-O，也没有沿用 Android 内存偏移。
 

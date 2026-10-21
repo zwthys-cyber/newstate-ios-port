@@ -10,6 +10,7 @@ namespace nsport {
 struct Vec3 { float x{}, y{}, z{}; };
 struct Point { float x{}, y{}; };
 struct Camera { Vec3 position, rotation; float fov{}; };
+struct BoneLine {Vec3 from,to;};
 using Read = bool (*)(void *, uint64_t, void *, size_t);
 struct Memory {
     void *context{};
@@ -27,6 +28,7 @@ bool project(Vec3 world, const Camera &camera, float width, float height, Point 
 float distance(Vec3 a, Vec3 b);
 bool isA(const Memory &memory, uint64_t objectClass, uint64_t wantedClass);
 uint64_t resolveWeak(const Memory &memory, uint64_t address);
+std::vector<BoneLine> readSkeleton(const Memory &memory,uint64_t mesh,Vec3 reference);
 
 enum class Kind { character = 1, vehicle = 2, item = 3 };
 struct Marker {
@@ -36,6 +38,7 @@ struct Marker {
     float health{}, maximum{}, halfHeight{};
     bool hasHealth{};
     std::u16string playerName;
+    std::vector<BoneLine> bones;
 };
 struct Snapshot {
     std::string status;
@@ -60,6 +63,6 @@ class Sampler {
     void discover(Snapshot &out);
 public:
     explicit Sampler(Memory source) : memory(source) {}
-    Snapshot sample();
+    Snapshot sample(bool includeSkeleton=false);
 };
 } // namespace nsport

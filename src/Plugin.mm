@@ -52,7 +52,7 @@ static void NSPLog(NSString *text) {
 
 @interface NSPOverlay : UIView
 @property(nonatomic) std::shared_ptr<Snapshot> snapshot;
-@property(nonatomic) BOOL characters,vehicles,items,boxes,lines,health,distances,names,crosshair;
+@property(nonatomic) BOOL characters,vehicles,items,boxes,lines,health,distances,names,crosshair,skeletons;
 @end
 @implementation NSPOverlay
 - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
@@ -83,6 +83,16 @@ static void NSPLog(NSString *text) {
             marker.kind==Kind::vehicle ? UIColor.systemCyanColor : UIColor.systemGreenColor;
         CGContextSetStrokeColorWithColor(context,color.CGColor);
         CGContextSetLineWidth(context,1.2);
+        if (self.skeletons) {
+            for (const BoneLine &bone:marker.bones) {
+                nsport::Point from,to;
+                if (project(bone.from,snapshot->camera,(float)width,(float)height,from) &&
+                    project(bone.to,snapshot->camera,(float)width,(float)height,to)) {
+                    CGContextMoveToPoint(context,from.x,from.y);CGContextAddLineToPoint(context,to.x,to.y);
+                }
+            }
+            CGContextStrokePath(context);
+        }
         if (self.lines) {
             CGContextMoveToPoint(context,width/2,height);
             CGContextAddLineToPoint(context,p.x,p.y);CGContextStrokePath(context);
@@ -210,7 +220,8 @@ static void NSPLog(NSString *text) {
     [stack addArrangedSubview:[self switchRow:@"角色血量" selector:@selector(healthChanged:) on:YES]];
     [stack addArrangedSubview:[self switchRow:@"角色姓名" selector:@selector(namesChanged:) on:YES]];
     [stack addArrangedSubview:[self switchRow:@"屏幕中心准星" selector:@selector(crosshairChanged:) on:YES]];
-    UILabel *scope=[UILabel new];scope.text=@"尚未实现：队伍区分、骨架、自瞄、后坐力、去雾。实机效果待验证。";
+    [stack addArrangedSubview:[self switchRow:@"骨架（实验性）" selector:@selector(skeletonsChanged:) on:NO]];
+    UILabel *scope=[UILabel new];scope.text=@"尚未实现：队伍区分、自瞄、后坐力、去雾。实机效果待验证。";
     scope.numberOfLines=0;scope.font=[UIFont systemFontOfSize:11];scope.textColor=UIColor.lightGrayColor;[stack addArrangedSubview:scope];
     UIButton *share=[UIButton buttonWithType:UIButtonTypeSystem];[share setTitle:@"导出当前状态" forState:UIControlStateNormal];
     [share addTarget:self action:@selector(shareStatus) forControlEvents:UIControlEventTouchUpInside];[stack addArrangedSubview:share];
@@ -220,10 +231,11 @@ static void NSPLog(NSString *text) {
         (void)timer;NSPController *strongSelf=weakSelf;
         if (!strongSelf || !strongSelf.enabled || strongSelf.busy || UIApplication.sharedApplication.applicationState!=UIApplicationStateActive) return;
         strongSelf.busy=YES;
+        BOOL includeSkeleton=strongSelf.overlay.skeletons;
         dispatch_async(strongSelf->_queue,^{
             @autoreleasepool {
                 auto result=std::make_shared<Snapshot>();
-                try {*result=strongSelf->_sampler->sample();} catch (...) {result->status="采样异常，已停止本次读取";}
+                try {*result=strongSelf->_sampler->sample(includeSkeleton);} catch (...) {result->status="采样异常，已停止本次读取";}
                 dispatch_async(dispatch_get_main_queue(),^{
                     strongSelf.busy=NO;
                     if (!strongSelf.enabled) return;
@@ -252,6 +264,7 @@ static void NSPLog(NSString *text) {
 - (void)healthChanged:(UISwitch *)s {self.overlay.health=s.on;[self.overlay setNeedsDisplay];}
 - (void)namesChanged:(UISwitch *)s {self.overlay.names=s.on;[self.overlay setNeedsDisplay];}
 - (void)crosshairChanged:(UISwitch *)s {self.overlay.crosshair=s.on;[self.overlay setNeedsDisplay];}
+- (void)skeletonsChanged:(UISwitch *)s {self.overlay.skeletons=s.on;[self.overlay setNeedsDisplay];}
 - (void)shareStatus {
     NSMutableDictionary *report=[@{@"plugin_version":@"0.1.0",@"device_system":UIDevice.currentDevice.systemVersion,
         @"game_version":@"0.9.98",@"game_build":@"804",@"expected_uuid":NSPUUID,
@@ -260,6 +273,9 @@ static void NSPLog(NSString *text) {
     if (snapshot) {
         report[@"camera_ready"]=@(snapshot->cameraReady);report[@"objects_scanned"]=@(snapshot->scanned);
         report[@"objects_total"]=@(snapshot->total);report[@"markers"]=@(snapshot->markers.size());
+        size_t bones=0,names=0;
+        for (const Marker &marker:snapshot->markers) {bones+=marker.bones.size();if (!marker.playerName.empty()) ++names;}
+        report[@"skeleton_lines"]=@(bones);report[@"names_available"]=@(names);
     }
     NSData *data=[NSJSONSerialization dataWithJSONObject:report options:NSJSONWritingPrettyPrinted error:nil];
     NSString *path=[NSTemporaryDirectory() stringByAppendingPathComponent:@"NewStatePort-status.json"];

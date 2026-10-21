@@ -80,6 +80,62 @@ uint64_t resolveWeak(const Memory &m, uint64_t address) {
         uint32_t(item.serial) != serial || (item.flags & 0x30000000)) return 0;
     return item.object;
 }
+std::vector<BoneLine> readSkeleton(const Memory &m,uint64_t mesh,Vec3 reference) {
+    struct Bone {uint32_t name,number;int32_t parent;};
+    struct Transform {float q[4];Vec3 translation,scale;float padding[2];};
+    static_assert(sizeof(Bone)==12 && sizeof(Transform)==48 && offsetof(Transform,scale)==28);
+    if (!mesh || !objectIsA(m,mesh,0x80b2008)) return {};
+    uint8_t registered{};
+    if (!m.get(mesh+0x84,registered) || !(registered&1)) return {};
+    uint64_t asset=m.pointer(mesh+0x600);Array boneArray{};
+    if (!asset || !m.get(asset+0x1b0,boneArray) || !arrayValid(boneArray,512) || boneArray.count<2) return {};
+    std::vector<Bone> info(size_t(boneArray.count));
+    if (!m.bytes(boneArray.data,info.data(),info.size()*sizeof(Bone))) return {};
+    uint64_t poseOwner=resolveWeak(m,mesh+0x5e8);
+    std::vector<int32_t> remap;
+    if (poseOwner) {
+        if (!objectIsA(m,poseOwner,0x80b2008) || !m.get(poseOwner+0x84,registered) || !(registered&1)) return {};
+        Array map{};
+        if (!m.get(mesh+0x710,map) || !arrayValid(map,2048) || map.count<boneArray.count) return {};
+        remap.resize(size_t(map.count));
+        if (!m.bytes(map.data,remap.data(),remap.size()*sizeof(int32_t))) return {};
+    } else poseOwner=mesh;
+    int32_t bufferIndex{};
+    if (!m.get(poseOwner+0x6e8,bufferIndex) || bufferIndex<0 || bufferIndex>1) return {};
+    uint64_t header=poseOwner+0x678+uint64_t(bufferIndex)*16;Array poses{};
+    if (!m.get(header,poses) || !arrayValid(poses,2048) || poses.count<1) return {};
+    if (remap.empty() && poses.count<boneArray.count) return {};
+    std::vector<Transform> transforms(size_t(poses.count));Transform world{};
+    if (!m.get(mesh+0x140,world) || !m.bytes(poses.data,transforms.data(),transforms.size()*sizeof(Transform))) return {};
+    Array after{};int32_t afterIndex{};
+    if (!m.get(header,after) || !m.get(poseOwner+0x6e8,afterIndex) || afterIndex!=bufferIndex ||
+        after.data!=poses.data || after.count!=poses.count || after.capacity!=poses.capacity) return {};
+    float norm=0;
+    for (float q:world.q) {if (!std::isfinite(q)) return {};norm+=q*q;}
+    if (std::abs(norm-1)>0.1f || !finite(world.translation) || !finite(world.scale) ||
+        std::abs(world.scale.x)>1000 || std::abs(world.scale.y)>1000 || std::abs(world.scale.z)>1000) return {};
+    auto cross=[](Vec3 a,Vec3 b){return Vec3{a.y*b.z-a.z*b.y,a.z*b.x-a.x*b.z,a.x*b.y-a.y*b.x};};
+    std::vector<Vec3> points(info.size());std::vector<bool> valid(info.size());
+    for (size_t i=0;i<info.size();++i) {
+        int32_t index=remap.empty() ? int32_t(i) : remap[i];
+        if (index<0 || index>=poses.count) continue;
+        Vec3 local=transforms[size_t(index)].translation;
+        if (!finite(local)) continue;
+        Vec3 scaled{local.x*world.scale.x,local.y*world.scale.y,local.z*world.scale.z};
+        Vec3 q{world.q[0],world.q[1],world.q[2]},uv=cross(q,scaled),uuv=cross(q,uv);
+        points[i]={world.translation.x+scaled.x+2*(world.q[3]*uv.x+uuv.x),
+            world.translation.y+scaled.y+2*(world.q[3]*uv.y+uuv.y),
+            world.translation.z+scaled.z+2*(world.q[3]*uv.z+uuv.z)};
+        valid[i]=finite(points[i]) && distance(points[i],reference)<1000;
+    }
+    std::vector<BoneLine> lines;
+    for (size_t i=0;i<info.size();++i) {
+        int32_t parent=info[i].parent;
+        if (parent<0 || parent>=boneArray.count || size_t(parent)==i || !valid[i] || !valid[size_t(parent)]) continue;
+        if (distance(points[i],points[size_t(parent)])<300) lines.push_back({points[size_t(parent)],points[i]});
+    }
+    return lines;
+}
 float distance(Vec3 a, Vec3 b) {
     return std::hypot(std::hypot(a.x-b.x, a.y-b.y), a.z-b.z);
 }
@@ -158,7 +214,7 @@ void Sampler::discover(Snapshot &out) {
     }
     out.scanned=cursor;
 }
-Snapshot Sampler::sample() {
+Snapshot Sampler::sample(bool includeSkeleton) {
     Snapshot out;
     out.status="等待游戏初始化";
     uint64_t engine=memory.pointer(memory.base+0x81e8ef0);
@@ -202,6 +258,7 @@ Snapshot Sampler::sample() {
         if (position(it->object,marker.position) && distance(marker.position,c.position)<300000) {
             if (marker.kind==Kind::character) {
                 marker.playerName=playerName(memory,marker.object);
+                if (includeSkeleton) marker.bones=readSkeleton(memory,memory.encodedPointer(marker.object+0x320),marker.position);
                 marker.hasHealth=memory.get(marker.object+0x22f8,marker.health) && memory.get(marker.object+0x6dc,marker.maximum) &&
                     std::isfinite(marker.health) && std::isfinite(marker.maximum) && marker.maximum>0 && marker.maximum<=10000 &&
                     marker.health>=0 && marker.health<=marker.maximum*1.1f;
