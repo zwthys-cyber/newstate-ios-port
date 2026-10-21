@@ -23,6 +23,20 @@ struct Array { uint64_t data; int32_t count, capacity; };
 bool arrayValid(Array a, int32_t limit) {
     return a.count >= 0 && a.count <= limit && a.capacity >= a.count && a.capacity <= limit;
 }
+std::u16string playerName(const Memory &m, uint64_t actor) {
+    uint64_t state=m.encodedPointer(actor+0x2c0);
+    if (!objectIsA(m,state,0x80adb20)) return {};
+    // Native GetPlayerName dispatches to a custom virtual path when bit 7 is set.
+    uint8_t flags{};
+    if (!m.get(state+0x2b8,flags) || (flags&0x80)) return {};
+    Array text{};
+    if (!m.get(state+0x358,text) || !arrayValid(text,256) || text.count<2) return {};
+    std::u16string value(size_t(text.count),u'\0');
+    if (!m.bytes(text.data,value.data(),value.size()*sizeof(char16_t)) || value.back()!=0) return {};
+    value.pop_back();
+    if (value.find(u'\0')!=std::u16string::npos) return {};
+    return value;
+}
 } // namespace
 
 bool Memory::bytes(uint64_t address, void *out, size_t size) const {
@@ -187,6 +201,7 @@ Snapshot Sampler::sample() {
         Marker marker;marker.object=it->object;marker.kind=it->kind;
         if (position(it->object,marker.position) && distance(marker.position,c.position)<300000) {
             if (marker.kind==Kind::character) {
+                marker.playerName=playerName(memory,marker.object);
                 marker.hasHealth=memory.get(marker.object+0x22f8,marker.health) && memory.get(marker.object+0x6dc,marker.maximum) &&
                     std::isfinite(marker.health) && std::isfinite(marker.maximum) && marker.maximum>0 && marker.maximum<=10000 &&
                     marker.health>=0 && marker.health<=marker.maximum*1.1f;

@@ -35,6 +35,7 @@ struct Marker {
     Vec3 position;
     float health{}, maximum{}, halfHeight{};
     bool hasHealth{};
+    std::u16string playerName;
 };
 struct Snapshot {
     std::string status;

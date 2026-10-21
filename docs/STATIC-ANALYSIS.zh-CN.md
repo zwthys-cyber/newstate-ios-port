@@ -44,6 +44,14 @@ PlayerCameraManager 构造函数设置基类虚表 RVA 0x7a9e970；TslPlayerCame
 
 ## 与原 APK 的关系
 
+新增读取依据：PlayerState 的 GetPlayerName 原生实现 RVA 0x5505f70 在标志 +0x2b8 的最高位未设置时，从 +0x358 / +0x360 复制 UTF-16 FString；置位时走自定义虚拟路径。插件只覆盖前一种情况，并检查长度、容量和末尾空字符。角色 PlayerState 使用 Pawn 的 +0x2c0 编码引用。
+
+后坐力调查：XtrmWeapon_Gun 的 RecoilScale 属性偏移为 +0xc00，属性类型登记到 Vector2D（8 字节，X/Y 两个浮点）。只证明存在此字段，不证明单独改写能产生预期效果，因此尚未接入写入开关。
+
+骨骼调查：GetBoneName 的原生实现 RVA 0x50eab78 使用 SkinnedMeshComponent +0x600 的 mesh 引用和 mesh +0x1b0 / +0x1b8 的 12 字节骨骼记录数组。尚未确认当前姿态缓冲区及骨骼到世界坐标的完整路径。
+
+这些调查结果仅用于后续适配，不表示未实现功能已经存在于当前 dylib。
+
 原 APK 的资源名为 External Pubg Cheat | Modyolo.com，包名 google.suport.misaki，针对 PUBG Mobile。重新实现的是显示类别和配置概念，不是把 ELF 二进制转换为 Mach-O，也没有沿用 Android 内存偏移。
 
 本阶段没有移植原 APK 的删除脚本、iptables 修改脚本或加密 ZIP 内容。未完成的游戏写入功能明确列在 README 和菜单中；没有用可切换的空开关冒充已实现功能。

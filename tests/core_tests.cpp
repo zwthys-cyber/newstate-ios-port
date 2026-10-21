@@ -93,9 +93,11 @@ static void completeReadPipeline() {
     constexpr uint64_t pawn=0x300040000,camera=0x300050000,target=0x300060000,root=0x300070000;
     constexpr uint64_t level=0x300080000,capsule=0x300090000,vtable=0x3000a0000,weakList=0x3000b0000;
     constexpr uint64_t chunk=0x3000c0000,table=0x3000d0000;
+    constexpr uint64_t nameData=0x3000e0000,state=0x3000f0000;
     for (uint64_t a:{engine,viewport,world,controller,pawn,camera,target,root,level,capsule,vtable,weakList,chunk,table}) f.allocate(a,0x4000);
-    std::array<uint64_t,7> slots{0x8098ac8,0x809b590,0x80b74f0,0x80ad348,0x80acee8,0x7f2c5b0,0x80a1620};
-    std::array<uint64_t,7> instances{engine,viewport,world,controller,camera,target,level};
+    f.allocate(nameData,512);f.allocate(state,0x400);
+    std::array<uint64_t,8> slots{0x8098ac8,0x809b590,0x80b74f0,0x80ad348,0x80acee8,0x7f2c5b0,0x80a1620,0x80adb20};
+    std::array<uint64_t,8> instances{engine,viewport,world,controller,camera,target,level,state};
     for (size_t i=0;i<slots.size();++i) {
         uint64_t cl=0x400000000+i*0x1000;f.allocate(cl,0x100);
         f.allocate(base+slots[i],8);f.set(base+slots[i],cl);f.set(instances[i]+0x30,encoded(cl));
@@ -110,11 +112,18 @@ static void completeReadPipeline() {
     f.set(camera+0x15e0,Vec3{0,0,0});f.set(camera+0x1bac,Vec3{0,0,0});f.set(camera+0x1bc0,90.0f);
     f.set(target+8,encoded(level));f.set(level+0x178,world);f.set(target+0x278,root);f.set(root+0x150,Vec3{1000,100,0});
     f.set(target+0x22f8,75.0f);f.set(target+0x6dc,100.0f);f.set(target+0x350,encoded(capsule));f.set(capsule+0x534,88.0f);
+    f.set(target+0x2c0,encoded(state));f.set(state+0x358,nameData);f.set(state+0x360,int32_t(6));f.set(state+0x364,int32_t(6));
+    std::array<char16_t,6> testName{u'测',u'试',u'B',u'o',u't',0};f.set(nameData,testName);
     Memory memory{&f,Fake::read,base};Sampler sampler(memory);
     auto out=sampler.sample();
     assert(out.cameraReady && out.world==world && out.controller==controller && out.pawn==pawn);
     assert(out.markers.size()==1 && out.markers[0].kind==Kind::character && out.markers[0].hasHealth);
     assert(out.markers[0].health==75 && out.markers[0].maximum==100 && out.markers[0].halfHeight==88);
+    assert(out.markers[0].playerName==u"测试Bot");
+    f.set(state+0x2b8,uint8_t(0x80));out=sampler.sample();assert(out.markers[0].playerName.empty());
+    f.set(state+0x2b8,uint8_t(0));f.set(state+0x360,int32_t(300));out=sampler.sample();assert(out.markers[0].playerName.empty());
+    f.set(state+0x360,int32_t(6));testName.back()=u'X';f.set(nameData,testName);out=sampler.sample();assert(out.markers[0].playerName.empty());
+    testName.back()=0;f.set(nameData,testName);
     // Objects being destroyed must disappear from previously cached candidates.
     f.set(chunk+24+16,uint32_t(0x20000000));out=sampler.sample();assert(out.cameraReady && out.markers.empty());
     f.set(chunk+24+16,uint32_t(0));f.set(level+0x178,uint64_t(world+0x8000));

@@ -52,7 +52,7 @@ static void NSPLog(NSString *text) {
 
 @interface NSPOverlay : UIView
 @property(nonatomic) std::shared_ptr<Snapshot> snapshot;
-@property(nonatomic) BOOL characters,vehicles,items,boxes,lines,health,distances;
+@property(nonatomic) BOOL characters,vehicles,items,boxes,lines,health,distances,names,crosshair;
 @end
 @implementation NSPOverlay
 - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
@@ -65,6 +65,13 @@ static void NSPLog(NSString *text) {
     if (!snapshot || !snapshot->cameraReady) return;
     CGContextRef context=UIGraphicsGetCurrentContext();
     CGFloat width=self.bounds.size.width,height=self.bounds.size.height;
+    if (self.crosshair) {
+        CGContextSetStrokeColorWithColor(context,UIColor.whiteColor.CGColor);
+        CGContextSetLineWidth(context,1);
+        CGContextMoveToPoint(context,width/2-7,height/2);CGContextAddLineToPoint(context,width/2+7,height/2);
+        CGContextMoveToPoint(context,width/2,height/2-7);CGContextAddLineToPoint(context,width/2,height/2+7);
+        CGContextStrokePath(context);
+    }
     for (const Marker &marker:snapshot->markers) {
         if (marker.kind==Kind::character && !self.characters) continue;
         if (marker.kind==Kind::vehicle && !self.vehicles) continue;
@@ -93,6 +100,10 @@ static void NSPLog(NSString *text) {
             }
         }
         NSString *kind=marker.kind==Kind::character ? @"角色" : marker.kind==Kind::vehicle ? @"载具" : @"物资";
+        if (self.names && !marker.playerName.empty()) {
+            NSString *name=[[NSString alloc] initWithCharacters:(const unichar *)marker.playerName.data() length:marker.playerName.size()];
+            if (name.length) kind=name;
+        }
         NSMutableString *label=[kind mutableCopy];
         if (self.distances) [label appendFormat:@" %.0fm",distance(marker.position,snapshot->camera.position)/100];
         if (self.health && marker.hasHealth) [label appendFormat:@" %.0f/%.0f",marker.health,marker.maximum];
@@ -154,6 +165,7 @@ static void NSPLog(NSString *text) {
     self.overlay=[[NSPOverlay alloc] initWithFrame:self.window.bounds];
     self.overlay.backgroundColor=UIColor.clearColor;self.overlay.opaque=NO;
     self.overlay.characters=YES;self.overlay.vehicles=YES;self.overlay.boxes=YES;self.overlay.health=YES;self.overlay.distances=YES;
+    self.overlay.names=YES;self.overlay.crosshair=YES;
     controller.view=self.overlay;self.window.rootViewController=controller;
     self.button=[UIButton buttonWithType:UIButtonTypeSystem];
     [self.button setTitle:@"NSP" forState:UIControlStateNormal];
@@ -196,7 +208,9 @@ static void NSPLog(NSString *text) {
     [stack addArrangedSubview:[self switchRow:@"连线" selector:@selector(linesChanged:) on:NO]];
     [stack addArrangedSubview:[self switchRow:@"距离" selector:@selector(distancesChanged:) on:YES]];
     [stack addArrangedSubview:[self switchRow:@"角色血量" selector:@selector(healthChanged:) on:YES]];
-    UILabel *scope=[UILabel new];scope.text=@"尚未实现：队伍区分、姓名、骨架、自瞄、后坐力、去雾。实机效果待验证。";
+    [stack addArrangedSubview:[self switchRow:@"角色姓名" selector:@selector(namesChanged:) on:YES]];
+    [stack addArrangedSubview:[self switchRow:@"屏幕中心准星" selector:@selector(crosshairChanged:) on:YES]];
+    UILabel *scope=[UILabel new];scope.text=@"尚未实现：队伍区分、骨架、自瞄、后坐力、去雾。实机效果待验证。";
     scope.numberOfLines=0;scope.font=[UIFont systemFontOfSize:11];scope.textColor=UIColor.lightGrayColor;[stack addArrangedSubview:scope];
     UIButton *share=[UIButton buttonWithType:UIButtonTypeSystem];[share setTitle:@"导出当前状态" forState:UIControlStateNormal];
     [share addTarget:self action:@selector(shareStatus) forControlEvents:UIControlEventTouchUpInside];[stack addArrangedSubview:share];
@@ -236,6 +250,8 @@ static void NSPLog(NSString *text) {
 - (void)linesChanged:(UISwitch *)s {self.overlay.lines=s.on;[self.overlay setNeedsDisplay];}
 - (void)distancesChanged:(UISwitch *)s {self.overlay.distances=s.on;[self.overlay setNeedsDisplay];}
 - (void)healthChanged:(UISwitch *)s {self.overlay.health=s.on;[self.overlay setNeedsDisplay];}
+- (void)namesChanged:(UISwitch *)s {self.overlay.names=s.on;[self.overlay setNeedsDisplay];}
+- (void)crosshairChanged:(UISwitch *)s {self.overlay.crosshair=s.on;[self.overlay setNeedsDisplay];}
 - (void)shareStatus {
     NSMutableDictionary *report=[@{@"plugin_version":@"0.1.0",@"device_system":UIDevice.currentDevice.systemVersion,
         @"game_version":@"0.9.98",@"game_build":@"804",@"expected_uuid":NSPUUID,
