@@ -119,7 +119,7 @@ static void NSPLog(NSString *text) {
 @end
 @implementation NSPViewController
 - (BOOL)prefersStatusBarHidden {return YES;}
-- (UIInterfaceOrientationMask)supportedInterfaceOrientations {return UIInterfaceOrientationMaskAll;}
+- (UIInterfaceOrientationMask)supportedInterfaceOrientations {return UIInterfaceOrientationMaskLandscape;}
 @end
 
 @interface NSPController : NSObject {
