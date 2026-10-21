@@ -1,7 +1,6 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 #import <mach/mach.h>
-#import <mach/mach_vm.h>
 #import <mach-o/dyld.h>
 #import <mach-o/loader.h>
 #include "PortCore.hpp"
@@ -11,9 +10,9 @@
 using namespace nsport;
 
 static bool NSPRead(void *, uint64_t address, void *buffer, size_t size) {
-    mach_vm_size_t copied=0;
-    return mach_vm_read_overwrite(mach_task_self(), address, size,
-        (mach_vm_address_t)buffer, &copied)==KERN_SUCCESS && copied==size;
+    vm_size_t copied=0;
+    return vm_read_overwrite(mach_task_self(), (vm_address_t)address, (vm_size_t)size,
+        (vm_address_t)buffer, &copied)==KERN_SUCCESS && copied==size;
 }
 static NSString *const NSPUUID=@"AF49432E-9F7F-3D7C-9470-8CF90E3B3378";
 static NSString *NSPValidate(void) {
@@ -70,7 +69,7 @@ static void NSPLog(NSString *text) {
         if (marker.kind==Kind::character && !self.characters) continue;
         if (marker.kind==Kind::vehicle && !self.vehicles) continue;
         if (marker.kind==Kind::item && !self.items) continue;
-        Point p;
+        nsport::Point p;
         if (!project(marker.position,snapshot->camera,(float)width,(float)height,p)) continue;
         if (p.x < -100 || p.x > width+100 || p.y < -100 || p.y > height+100) continue;
         UIColor *color=marker.kind==Kind::character ? UIColor.systemYellowColor :
@@ -85,7 +84,7 @@ static void NSPLog(NSString *text) {
         if (self.boxes && marker.kind==Kind::character && marker.halfHeight>0) {
             Vec3 head=marker.position,feet=marker.position;
             head.z+=marker.halfHeight;feet.z-=marker.halfHeight;
-            Point top,bottom;
+            nsport::Point top,bottom;
             if (project(head,snapshot->camera,(float)width,(float)height,top) &&
                 project(feet,snapshot->camera,(float)width,(float)height,bottom)) {
                 CGFloat boxHeight=fabs(bottom.y-top.y),boxWidth=boxHeight*0.45;
