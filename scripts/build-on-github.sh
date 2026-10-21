@@ -72,4 +72,5 @@ PY
 cp README.zh-CN.md out/
 git archive --format=zip --output=out/newstate-ios-port-source.zip HEAD
 bash scripts/build-devmode-check.sh
+bash scripts/build-external-port.sh
 (cd out && shasum -a 256 ./* > SHA256SUMS)
