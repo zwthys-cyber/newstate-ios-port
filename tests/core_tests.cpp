@@ -9,9 +9,11 @@
 using namespace nsport;
 struct Fake {
     std::map<uint64_t,std::vector<uint8_t>> regions;
+    size_t reads{};
     void allocate(uint64_t a,size_t n) {regions[a]=std::vector<uint8_t>(n);}
     static bool read(void *ctx,uint64_t a,void *out,size_t n) {
         Fake &self=*static_cast<Fake *>(ctx);
+        ++self.reads;
         auto it=self.regions.upper_bound(a);
         if (it==self.regions.begin()) return false;
         --it;
@@ -57,6 +59,29 @@ static void projection() {
     camera.fov=90;assert(!project({NAN,0,0},camera,2000,1000,p));
     assert(!project({100,0,0},camera,0,1000,p));
     assert(near(distance({0,0,0},{3,4,12}),13));
+}
+static void healthAndEdgeIndicators() {
+    float fraction=42;
+    assert(healthFraction(75,100,fraction) && std::abs(fraction-0.75f)<0.0001f);
+    assert(healthFraction(0,100,fraction) && fraction==0);
+    assert(healthFraction(110,100,fraction) && fraction==1);
+    for (auto invalid:std::array<std::pair<float,float>,6>{{{NAN,100},{10,NAN},{-1,100},{1,0},{1,10001},{111,100}}})
+        assert(!healthFraction(invalid.first,invalid.second,fraction) && fraction==0);
+    Camera c{{0,0,0},{0,0,0},90};EdgeIndicator e;
+    assert(!offscreenIndicator({100,0,0},c,2000,1000,34,e));
+    assert(offscreenIndicator({100,200,0},c,2000,1000,34,e) && !e.behind);
+    assert(std::abs(e.position.x-1966)<0.01f && std::abs(e.position.y-500)<0.01f && e.direction.x>0);
+    assert(offscreenIndicator({100,-200,100},c,2000,1000,34,e));
+    assert(e.position.x>=34 && e.position.y>=34 && e.direction.x<0 && e.direction.y<0);
+    assert(offscreenIndicator({-100,0,0},c,2000,1000,34,e) && e.behind);
+    assert(std::abs(e.position.x-1000)<0.01f && std::abs(e.position.y-966)<0.01f);
+    c.rotation.y=90;
+    assert(!offscreenIndicator({0,100,0},c,2000,1000,34,e));
+    assert(offscreenIndicator({0,-100,0},c,2000,1000,34,e) && e.behind);
+    assert(std::abs(e.position.y-966)<0.01f);
+    assert(!offscreenIndicator({NAN,0,0},c,2000,1000,34,e));
+    assert(!offscreenIndicator({-100,0,0},c,60,60,34,e));
+    assert(!offscreenIndicator(c.position,c,2000,1000,34,e));
 }
 static void objectLifecycle() {
     Fake f;constexpr uint64_t base=0x100000000,table=0x200000000,chunk=0x200010000,address=0x200020000;
@@ -120,6 +145,17 @@ static void completeReadPipeline() {
     assert(out.markers.size()==1 && out.markers[0].kind==Kind::character && out.markers[0].hasHealth);
     assert(out.markers[0].health==75 && out.markers[0].maximum==100 && out.markers[0].halfHeight==88);
     assert(out.markers[0].playerName==u"测试Bot");
+    // Fast samples retain labels but read fresh position/camera and reject destroyed objects.
+    size_t slowReads=f.reads;
+    SampleOptions fast;fast.details=false;fast.discoveryBudget=0;fast.kinds=1;
+    f.set(root+0x150,Vec3{2000,100,0});f.set(camera+0x1bac,Vec3{0,90,0});
+    size_t before=f.reads;auto moving=sampler.sample(fast);
+    assert(moving.cameraReady && moving.markers.size()==1 && moving.markers[0].position.x==2000);
+    assert(moving.camera.rotation.y==90 && moving.markers[0].playerName==u"测试Bot");
+    assert(f.reads-before<slowReads);
+    f.set(chunk+24+16,uint32_t(0x20000000));moving=sampler.sample(fast);assert(moving.markers.empty());
+    f.set(chunk+24+16,uint32_t(0));f.set(root+0x150,Vec3{1000,100,0});f.set(camera+0x1bac,Vec3{0,0,0});
+    out=sampler.sample();assert(out.markers.size()==1);
     f.set(state+0x2b8,uint8_t(0x80));out=sampler.sample();assert(out.markers[0].playerName.empty());
     f.set(state+0x2b8,uint8_t(0));f.set(state+0x360,int32_t(300));out=sampler.sample();assert(out.markers[0].playerName.empty());
     f.set(state+0x360,int32_t(6));testName.back()=u'X';f.set(nameData,testName);out=sampler.sample();assert(out.markers[0].playerName.empty());
@@ -188,6 +224,6 @@ static void skeletonReader() {
     f.set(map,std::array<int32_t,3>{2,-1,0});assert(readSkeleton(memory,mesh,{100,200,300}).empty());
 }
 int main() {
-    crypto();projection();objectLifecycle();inheritanceAndUnreadableMemory();completeReadPipeline();skeletonReader();
-    std::cout<<"PASS: decode golden vectors; camera projection and invalid input; weak-object serial/lifecycle/bounds; class hierarchy; unreadable memory; synthetic world/controller/camera/marker pipeline and invalidation; skeleton quaternion/scale/parent/buffer/leader-remap handling\n";
+    crypto();projection();healthAndEdgeIndicators();objectLifecycle();inheritanceAndUnreadableMemory();completeReadPipeline();skeletonReader();
+    std::cout<<"PASS: decode; projection and edge direction/bounds/behind/yaw/invalid inputs; health validation; weak-object lifecycle; synthetic pipeline; fresh motion/camera with cached labels and fewer reads; skeleton transforms/buffers/leader-remap\n";
 }

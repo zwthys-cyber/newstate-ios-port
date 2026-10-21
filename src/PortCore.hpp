@@ -9,6 +9,7 @@
 namespace nsport {
 struct Vec3 { float x{}, y{}, z{}; };
 struct Point { float x{}, y{}; };
+struct EdgeIndicator {Point position,direction;bool behind{};};
 struct Camera { Vec3 position, rotation; float fov{}; };
 struct BoneLine {Vec3 from,to;};
 using Read = bool (*)(void *, uint64_t, void *, size_t);
@@ -25,6 +26,8 @@ uint64_t decodePointer(const std::array<uint64_t, 3> &words);
 uint32_t decodeIndex(const std::array<uint32_t, 3> &words);
 uint32_t decodeSerial(const std::array<uint32_t, 3> &words);
 bool project(Vec3 world, const Camera &camera, float width, float height, Point &out);
+bool offscreenIndicator(Vec3 world,const Camera &camera,float width,float height,float inset,EdgeIndicator &out);
+bool healthFraction(float current,float maximum,float &fraction);
 float distance(Vec3 a, Vec3 b);
 bool isA(const Memory &memory, uint64_t objectClass, uint64_t wantedClass);
 uint64_t resolveWeak(const Memory &memory, uint64_t address);
@@ -48,10 +51,15 @@ struct Snapshot {
     uint32_t scanned{}, total{};
     std::vector<Marker> markers;
 };
+struct SampleOptions {
+    bool skeletons{},details{true};
+    uint32_t discoveryBudget{2048};
+    uint8_t kinds{7}; // character=1, vehicle=2, item=4
+};
 
 // Memory observations only: no engine function calls, code hooks or writes.
 class Sampler {
-    struct Candidate { uint64_t object, item; int32_t serial; Kind kind; float distance; };
+    struct Candidate { uint64_t object, item; int32_t serial; Kind kind; float distance; Marker details;bool detailsReady{}; };
     Memory memory;
     std::unordered_map<uint64_t, int> classKinds;
     std::vector<Candidate> candidates;
@@ -60,9 +68,10 @@ class Sampler {
     int classify(uint64_t objectClass);
     bool inWorld(uint64_t actor, uint64_t world) const;
     bool position(uint64_t actor, Vec3 &out) const;
-    void discover(Snapshot &out);
+    void discover(Snapshot &out,const SampleOptions &options);
 public:
     explicit Sampler(Memory source) : memory(source) {}
     Snapshot sample(bool includeSkeleton=false);
+    Snapshot sample(const SampleOptions &options);
 };
 } // namespace nsport

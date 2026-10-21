@@ -155,6 +155,40 @@ bool project(Vec3 world, const Camera &c, float w, float h, Point &out) {
     out={w*0.5f+dot(right)*focal/depth,h*0.5f-dot(up)*focal/depth};
     return std::isfinite(out.x) && std::isfinite(out.y);
 }
+bool healthFraction(float current,float maximum,float &fraction) {
+    fraction=0;
+    if (!std::isfinite(current) || !std::isfinite(maximum) || maximum<=0 || maximum>10000 ||
+        current<0 || current>maximum*1.1f) return false;
+    fraction=std::min(current/maximum,1.0f);return true;
+}
+bool offscreenIndicator(Vec3 world,const Camera &camera,float width,float height,float inset,EdgeIndicator &out) {
+    out={};
+    if (!finite(world) || !finite(camera.position) || !finite(camera.rotation) ||
+        !std::isfinite(camera.fov) || camera.fov<=1 || camera.fov>=179 ||
+        !std::isfinite(width) || !std::isfinite(height) || !std::isfinite(inset) ||
+        inset<12 || width<=2*inset || height<=2*inset) return false;
+    Point projected;float x=0,y=0;
+    if (project(world,camera,width,height,projected)) {
+        if (projected.x>=0 && projected.x<=width && projected.y>=0 && projected.y<=height) return false;
+        x=projected.x-width/2;y=projected.y-height/2;
+    } else {
+        // Targets behind the view use horizontal bearing: directly behind points down.
+        float yaw=camera.rotation.y*pi/180;
+        Vec3 delta{world.x-camera.position.x,world.y-camera.position.y,world.z-camera.position.z};
+        x=-std::sin(yaw)*delta.x+std::cos(yaw)*delta.y;
+        y=-(std::cos(yaw)*delta.x+std::sin(yaw)*delta.y);
+        if (std::hypot(x,y)<0.001f) y=-delta.z;
+        out.behind=true;
+    }
+    float length=std::hypot(x,y);
+    if (!std::isfinite(length) || length<0.001f) return false;
+    x/=length;y/=length;
+    float horizontal=std::abs(x)>0.000001f ? (width/2-inset)/std::abs(x) : std::numeric_limits<float>::infinity();
+    float vertical=std::abs(y)>0.000001f ? (height/2-inset)/std::abs(y) : std::numeric_limits<float>::infinity();
+    float extent=std::min(horizontal,vertical);
+    out.position={width/2+x*extent,height/2+y*extent};out.direction={x,y};
+    return std::isfinite(out.position.x) && std::isfinite(out.position.y);
+}
 int Sampler::classify(uint64_t cl) {
     if (!cl) return 0;
     auto found=classKinds.find(cl);
@@ -185,7 +219,7 @@ bool Sampler::position(uint64_t actor,Vec3 &out) const {
     return root && memory.get(root+0x150,out) && finite(out) &&
         std::abs(out.x)<1e8 && std::abs(out.y)<1e8 && std::abs(out.z)<1e8;
 }
-void Sampler::discover(Snapshot &out) {
+void Sampler::discover(Snapshot &out,const SampleOptions &options) {
     int32_t count{};
     if (!memory.get(memory.base+objectCount,count) || count<0 || uint32_t(count)>maximumObjects) {
         out.status="对象表尚未就绪"; return;
@@ -194,7 +228,7 @@ void Sampler::discover(Snapshot &out) {
     if (cursor>=out.total) {cursor=0;classKinds.clear();}
     uint64_t table=memory.pointer(memory.base+objectChunks);
     if (!table) return;
-    uint32_t work=std::min(2048U,out.total-cursor);
+    uint32_t work=std::min({options.discoveryBudget,2048U,out.total-cursor});
     while (work) {
         uint32_t take=std::min({work,256U,65536U-(cursor&0xffffU)});
         uint64_t chunk=memory.pointer(table+uint64_t(cursor>>16)*8);
@@ -205,7 +239,7 @@ void Sampler::discover(Snapshot &out) {
                 const auto &it=items[i];
                 if (!it.object || !it.serial || (it.flags&0x30000000)) continue;
                 int kind=classify(objectClass(memory,it.object));
-                if (!kind || it.object==out.pawn || !inWorld(it.object,out.world)) continue;
+                if (!kind || !(options.kinds&(1U<<(kind-1))) || it.object==out.pawn || !inWorld(it.object,out.world)) continue;
                 bool exists=std::any_of(candidates.begin(),candidates.end(),[&](const Candidate &c){return c.object==it.object;});
                 if (exists) continue;
                 Vec3 location;
@@ -215,7 +249,7 @@ void Sampler::discover(Snapshot &out) {
                 Kind category=Kind(kind);
                 size_t limit=category==Kind::vehicle ? 128 : 256;
                 size_t countInKind=size_t(std::count_if(candidates.begin(),candidates.end(),[&](const Candidate &c){return c.kind==category;}));
-                Candidate incoming{it.object,itemAddress+i*sizeof(Item),it.serial,category,range};
+                Candidate incoming{it.object,itemAddress+i*sizeof(Item),it.serial,category,range,{},false};
                 if (countInKind<limit) candidates.push_back(incoming);
                 else {
                     auto farthest=candidates.end();
@@ -230,6 +264,10 @@ void Sampler::discover(Snapshot &out) {
     out.scanned=cursor;
 }
 Snapshot Sampler::sample(bool includeSkeleton) {
+    SampleOptions options;options.skeletons=includeSkeleton;
+    return sample(options);
+}
+Snapshot Sampler::sample(const SampleOptions &options) {
     Snapshot out;
     out.status="等待游戏初始化";
     uint64_t engine=memory.pointer(memory.base+0x81e8ef0);
@@ -263,25 +301,29 @@ Snapshot Sampler::sample(bool includeSkeleton) {
         out.status="相机数据未通过校验";return out;
     }
     out.cameraReady=true; out.status="只读采样中（角色包含队友）";
-    discover(out);
+    discover(out,options);
     auto it=candidates.begin();
     while (it!=candidates.end()) {
+        if (!(options.kinds&(1U<<(static_cast<unsigned>(it->kind)-1)))) {++it;continue;}
+        bool details=options.details || !it->detailsReady;
         Item current{};
         if (!memory.get(it->item,current) || current.object!=it->object || current.serial!=it->serial ||
-            (current.flags&0x30000000) || !inWorld(it->object,out.world)) {it=candidates.erase(it);continue;}
-        Marker marker;marker.object=it->object;marker.kind=it->kind;
+            (current.flags&0x30000000) || (details && !inWorld(it->object,out.world))) {it=candidates.erase(it);continue;}
+        Marker marker=it->details;marker.object=it->object;marker.kind=it->kind;
         if (position(it->object,marker.position) && distance(marker.position,c.position)<300000) {
             it->distance=distance(marker.position,c.position);
-            if (marker.kind==Kind::character) {
+            if (marker.kind==Kind::character && details) {
                 marker.playerName=playerName(memory,marker.object);
-                if (includeSkeleton) marker.bones=readSkeleton(memory,memory.encodedPointer(marker.object+0x320),marker.position);
+                float fraction{};
                 marker.hasHealth=memory.get(marker.object+0x22f8,marker.health) && memory.get(marker.object+0x6dc,marker.maximum) &&
-                    std::isfinite(marker.health) && std::isfinite(marker.maximum) && marker.maximum>0 && marker.maximum<=10000 &&
-                    marker.health>=0 && marker.health<=marker.maximum*1.1f;
-                uint64_t capsule=memory.encodedPointer(marker.object+0x350);
+                    healthFraction(marker.health,marker.maximum,fraction);
+                marker.halfHeight=0;uint64_t capsule=memory.encodedPointer(marker.object+0x350);
                 if (capsule) memory.get(capsule+0x534,marker.halfHeight);
                 if (!std::isfinite(marker.halfHeight) || marker.halfHeight<10 || marker.halfHeight>300) marker.halfHeight=0;
             }
+            if (details) {it->details=marker;it->details.bones.clear();it->detailsReady=true;}
+            if (marker.kind==Kind::character && options.skeletons)
+                marker.bones=readSkeleton(memory,memory.encodedPointer(marker.object+0x320),marker.position);
             out.markers.push_back(marker);
         } else {it=candidates.erase(it);continue;}
         ++it;

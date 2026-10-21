@@ -17,7 +17,7 @@
 extern char **environ;
 static NSString *NSPFolder;
 static NSString *const NSPStop=@"org.newstateport.external.stop";
-static NSString *const NSPVersion=@"0.2.4";
+static NSString *const NSPVersion=@"0.2.5";
 static NSString *const NSPStorage=@"/var/mobile/Library/Application Support/org.newstateport.External";
 
 @interface UIApplication (NSPPrivate)
@@ -87,7 +87,7 @@ static void NSPLaunchReport(NSString *phase,NSString *message,int error,pid_t ch
 static NSDictionary *NSPDefaults(void) {
     return @{@"sampling":@NO,@"characters":@YES,@"vehicles":@YES,@"items":@NO,
         @"boxes":@YES,@"lines":@NO,@"health":@YES,@"distances":@YES,@"names":@YES,
-        @"crosshair":@YES,@"skeletons":@NO,@"orientation":@0};
+        @"crosshair":@YES,@"skeletons":@NO,@"orientation":@0,@"edge_indicators":@NO,@"health_bars":@YES};
 }
 static NSDictionary *NSPCheckSpawn(BOOL root) {
     NSString *mode=root ? @"root" : @"mobile";
@@ -160,11 +160,28 @@ static CGRect NSPScreenBounds(void) {
         if (marker.kind==nsport::Kind::character && ![o[@"characters"] boolValue]) continue;
         if (marker.kind==nsport::Kind::vehicle && ![o[@"vehicles"] boolValue]) continue;
         if (marker.kind==nsport::Kind::item && ![o[@"items"] boolValue]) continue;
-        nsport::Point p;
-        if (!nsport::project(marker.position,snapshot->camera,(float)width,(float)height,p) ||
-            p.x < -100 || p.x > width+100 || p.y < -100 || p.y > height+100) continue;
         UIColor *color=marker.kind==nsport::Kind::character ? UIColor.systemYellowColor :
             marker.kind==nsport::Kind::vehicle ? UIColor.systemCyanColor : UIColor.systemGreenColor;
+        nsport::Point p;
+        if (!nsport::project(marker.position,snapshot->camera,(float)width,(float)height,p) ||
+            p.x<0 || p.x>width || p.y<0 || p.y>height) {
+            nsport::EdgeIndicator edge;
+            if (marker.kind==nsport::Kind::character && [o[@"edge_indicators"] boolValue] &&
+                nsport::offscreenIndicator(marker.position,snapshot->camera,(float)width,(float)height,34,edge)) {
+                CGFloat x=edge.position.x,y=edge.position.y,dx=edge.direction.x,dy=edge.direction.y;
+                CGContextSetFillColorWithColor(c,color.CGColor);
+                CGContextMoveToPoint(c,x+dx*8,y+dy*8);
+                CGContextAddLineToPoint(c,x-dx*6-dy*5,y-dy*6+dx*5);
+                CGContextAddLineToPoint(c,x-dx*6+dy*5,y-dy*6-dx*5);CGContextClosePath(c);CGContextFillPath(c);
+                if ([o[@"distances"] boolValue]) {
+                    NSString *distance=[NSString stringWithFormat:@"%.0fm",nsport::distance(marker.position,snapshot->camera.position)/100];
+                    [distance drawAtPoint:CGPointMake(x-dx*20-18,y-dy*20-6) withAttributes:@{
+                        NSFontAttributeName:[UIFont monospacedSystemFontOfSize:10 weight:UIFontWeightSemibold],
+                        NSForegroundColorAttributeName:color,NSBackgroundColorAttributeName:[UIColor.blackColor colorWithAlphaComponent:0.55]}];
+                }
+            }
+            continue;
+        }
         CGContextSetStrokeColorWithColor(c,color.CGColor);CGContextSetLineWidth(c,1.2);
         if ([o[@"skeletons"] boolValue]) {
             for (const auto &bone:marker.bones) {
@@ -200,6 +217,14 @@ static CGRect NSPScreenBounds(void) {
         [label drawAtPoint:CGPointMake(p.x+5,p.y+3) withAttributes:@{
             NSFontAttributeName:[UIFont monospacedSystemFontOfSize:11 weight:UIFontWeightSemibold],
             NSForegroundColorAttributeName:color,NSBackgroundColorAttributeName:[UIColor.blackColor colorWithAlphaComponent:0.55]}];
+        float fraction=0;
+        if (marker.kind==nsport::Kind::character && [o[@"health_bars"] boolValue] && marker.hasHealth &&
+            nsport::healthFraction(marker.health,marker.maximum,fraction)) {
+            CGRect bar=CGRectMake(p.x+5,p.y+19,48,4);
+            CGContextSetFillColorWithColor(c,[UIColor.blackColor colorWithAlphaComponent:0.75].CGColor);CGContextFillRect(c,bar);
+            UIColor *fill=fraction<=0.25f ? UIColor.systemRedColor : fraction<=0.5f ? UIColor.systemOrangeColor : UIColor.systemGreenColor;
+            CGContextSetFillColorWithColor(c,fill.CGColor);CGContextFillRect(c,CGRectMake(bar.origin.x,bar.origin.y,bar.size.width*fraction,bar.size.height));
+        }
     }
 }
 @end
@@ -219,6 +244,7 @@ static CGRect NSPScreenBounds(void) {
     BOOL _busy;
     NSTimeInterval _lastReport;
     NSString *_lastStatus;
+    NSTimeInterval _lastSettingsLoad,_lastReadStart;
 }
 @property(nonatomic,strong) UIWindow *window;
 @property(nonatomic,strong) NSPCanvas *canvas;
@@ -256,13 +282,17 @@ static void NSPStopCallback(CFNotificationCenterRef center,void *observer,CFStri
     call.target=self.host;call.selector=selector;[call setArgument:&context atIndex:2];[call setArgument:&level atIndex:3];[call invoke];
     _queue=dispatch_queue_create("org.newstateport.external.read",DISPATCH_QUEUE_SERIAL);
     __weak NSPHUDDelegate *weak=self;
-    self.timer=[NSTimer scheduledTimerWithTimeInterval:0.2 repeats:YES block:^(NSTimer *timer) {
+    self.timer=[NSTimer scheduledTimerWithTimeInterval:1.0/30.0 repeats:YES block:^(NSTimer *timer) {
         (void)timer;[weak tick];
     }];
     [self tick];return YES;
 }
 - (void)tick {
-    NSDictionary *settings=NSPReadJSON(@"settings.json")?:NSPDefaults();
+    NSTimeInterval uptime=NSProcessInfo.processInfo.systemUptime;
+    NSDictionary *settings=self.canvas.options;
+    if (!settings || uptime-_lastSettingsLoad>=0.25) {
+        settings=NSPReadJSON(@"settings.json")?:NSPDefaults();_lastSettingsLoad=uptime;
+    }
     self.canvas.options=settings;
     CGSize screen=self.window.bounds.size;NSInteger orientation=[settings[@"orientation"] integerValue];
     self.canvas.transform=CGAffineTransformIdentity;
@@ -275,10 +305,18 @@ static void NSPStopCallback(CFNotificationCenterRef center,void *observer,CFStri
     }
     if (_busy) return;
     _busy=YES;BOOL skeleton=[settings[@"skeletons"] boolValue];
+    nsport::SampleOptions requested;requested.skeletons=skeleton;requested.kinds=0;
+    if ([settings[@"characters"] boolValue]) requested.kinds|=1;
+    if ([settings[@"vehicles"] boolValue]) requested.kinds|=2;
+    if ([settings[@"items"] boolValue]) requested.kinds|=4;
     dispatch_async(_queue,^{
         @autoreleasepool {
             nsport::RemoteResult result;
-            try {result=self->_reader.sample(skeleton);} catch (...) {result.status="远程读取异常，本次采样已停止";}
+            NSTimeInterval start=NSProcessInfo.processInfo.systemUptime;
+            double interval=self->_lastReadStart ? (start-self->_lastReadStart)*1000 : 0;
+            self->_lastReadStart=start;
+            try {result=self->_reader.sample(requested);} catch (...) {result.status="远程读取异常，本次采样已停止";}
+            double elapsed=(NSProcessInfo.processInfo.systemUptime-start)*1000;
             dispatch_async(dispatch_get_main_queue(),^{
                 self->_busy=NO;
                 if (![self.canvas.options[@"sampling"] boolValue]) return;
@@ -288,6 +326,8 @@ static void NSPStopCallback(CFNotificationCenterRef center,void *observer,CFStri
                 NSMutableDictionary *extra=[@{@"sampling":@YES,@"target_pid":@(result.pid),
                     @"read_port_acquired":@(result.readPort),@"read_error":@(result.error),
                     @"hosting_call_returned":@YES} mutableCopy];
+                extra[@"performance"]=@{@"read_ms":@(elapsed),@"sample_interval_ms":@(interval),
+                    @"target_hz":@30,@"discovery_budget":@256,@"details_refreshed":@(result.detailsRefreshed)};
                 if (!result.images.stage.empty()) {
                     NSMutableArray *uuids=[NSMutableArray array];
                     for (const auto &uuid:result.images.executableUUIDs) [uuids addObject:[NSString stringWithUTF8String:uuid.c_str()]];
@@ -306,6 +346,18 @@ static void NSPStopCallback(CFNotificationCenterRef center,void *observer,CFStri
                 if (result.snapshot) {
                     extra[@"camera_ready"]=@(result.snapshot->cameraReady);extra[@"markers"]=@(result.snapshot->markers.size());
                     extra[@"scanned"]=@(result.snapshot->scanned);extra[@"objects"]=@(result.snapshot->total);
+                    size_t characters=0,vehicles=0,items=0,health=0,skeletons=0,bones=0;
+                    for (const auto &marker:result.snapshot->markers) {
+                        if (marker.kind==nsport::Kind::character) {
+                            ++characters;if (marker.hasHealth) ++health;
+                            if (!marker.bones.empty()) ++skeletons;
+                            bones+=marker.bones.size();
+                        } else if (marker.kind==nsport::Kind::vehicle) ++vehicles;
+                        else if (marker.kind==nsport::Kind::item) ++items;
+                    }
+                    extra[@"marker_counts"]=@{@"characters":@(characters),@"vehicles":@(vehicles),@"items":@(items),
+                        @"health_readable":@(health),@"skeletons_readable":@(skeletons),@"bone_segments":@(bones)};
+                    extra[@"skeleton_sampling_enabled"]=@(skeleton);
                 }
                 [self report:self.canvas.status extra:extra];
             });
@@ -333,7 +385,8 @@ static void NSPStopCallback(CFNotificationCenterRef center,void *observer,CFStri
 @implementation NSPControl
 - (void)viewDidLoad {
     [super viewDidLoad];self.title=@"NSP 外置显示";self.view.backgroundColor=UIColor.systemBackgroundColor;
-    self.settings=[(NSPReadJSON(@"settings.json")?:NSPDefaults()) mutableCopy];
+    self.settings=[NSPDefaults() mutableCopy];
+    [self.settings addEntriesFromDictionary:NSPReadJSON(@"settings.json")?:@{}];
     UIScrollView *scroll=[UIScrollView new];scroll.translatesAutoresizingMaskIntoConstraints=NO;[self.view addSubview:scroll];
     UIStackView *stack=[UIStackView new];stack.axis=UILayoutConstraintAxisVertical;stack.spacing=12;
     stack.translatesAutoresizingMaskIntoConstraints=NO;[scroll addSubview:stack];
@@ -360,7 +413,8 @@ static void NSPStopCallback(CFNotificationCenterRef center,void *observer,CFStri
     [orientation addTarget:self action:@selector(orientationChanged:) forControlEvents:UIControlEventValueChanged];[stack addArrangedSubview:orientation];
     for (NSArray *item in @[@[@"sampling",@"开启游戏读取"],@[@"characters",@"角色（包含队友）"],@[@"vehicles",@"载具"],
         @[@"items",@"物资位置"],@[@"boxes",@"胶囊轮廓方框"],@[@"lines",@"连线"],@[@"health",@"血量"],
-        @[@"distances",@"距离"],@[@"names",@"姓名"],@[@"crosshair",@"中心准星"],@[@"skeletons",@"骨架（实验性）"]]) {
+        @[@"distances",@"距离"],@[@"names",@"姓名"],@[@"crosshair",@"中心准星"],@[@"skeletons",@"骨架（实验性）"],
+        @[@"health_bars",@"人物血量条"],@[@"edge_indicators",@"屏外角色方向（包含队友）"]]) {
         UILabel *label=[UILabel new];label.text=item[1];label.numberOfLines=0;
         UISwitch *toggle=[UISwitch new];toggle.accessibilityIdentifier=item[0];toggle.on=[self.settings[item[0]] boolValue];
         [toggle addTarget:self action:@selector(toggle:) forControlEvents:UIControlEventValueChanged];

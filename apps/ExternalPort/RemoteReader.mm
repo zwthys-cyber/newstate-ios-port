@@ -58,11 +58,11 @@ bool RemoteReader::read(void *context,uint64_t address,void *buffer,size_t size)
     return true;
 }
 void RemoteReader::reset() {
-    sampler.reset();base=0;pid=0;
+    sampler.reset();base=0;pid=0;nextDetails={};
     if (port) {mach_port_deallocate(mach_task_self(),port);port=0;}
 }
 RemoteReader::~RemoteReader() {reset();}
-RemoteResult RemoteReader::sample(bool skeleton) {
+RemoteResult RemoteReader::sample(const SampleOptions &requested) {
     auto now=std::chrono::steady_clock::now();
     if (now<retryAfter) return lastFailure;
     RemoteResult result;
@@ -118,7 +118,12 @@ RemoteResult RemoteReader::sample(bool skeleton) {
     if (!targetImage(memory,base)) {
         result.status="目标进程已退出或镜像不可读，等待重新连接";reset();return result;
     }
-    result.snapshot=std::make_shared<Snapshot>(sampler->sample(skeleton));
+    SampleOptions options=requested;
+    options.details=now>=nextDetails;
+    options.discoveryBudget=256;
+    if (options.details) nextDetails=now+std::chrono::milliseconds(500);
+    result.detailsRefreshed=options.details;
+    result.snapshot=std::make_shared<Snapshot>(sampler->sample(options));
     result.status=result.snapshot->status;
     return result;
 }
