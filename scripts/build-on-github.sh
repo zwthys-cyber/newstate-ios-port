@@ -47,4 +47,5 @@ pathlib.Path('out/build-info.json').write_text(json.dumps(data,indent=2)+'\n')
 PY
 cp README.zh-CN.md out/
 git archive --format=zip --output=out/newstate-ios-port-source.zip HEAD
+bash scripts/build-devmode-check.sh
 (cd out && shasum -a 256 ./* > SHA256SUMS)

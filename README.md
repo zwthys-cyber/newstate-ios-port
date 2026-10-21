@@ -11,3 +11,5 @@ NEW STATE **0.9.98（804）** 的实验性 iOS 动态库移植。用户设备为
 - [GitHub Actions 构建](../../actions/workflows/build.yml)
 
 源码通过 GitHub 托管 macOS / Xcode 26.6 编译。公开仓库不包含游戏主程序、APK、IPA、框架或设备日志。
+
+另提供独立的[开发签名安装测试 IPA](apps/DeveloperModeCheck/README.zh-CN.md)，用于全能签开发签名安装流程；应用自身无法开启开发者模式。
