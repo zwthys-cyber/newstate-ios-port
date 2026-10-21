@@ -3,12 +3,13 @@ import AppKit
 import Foundation
 guard ProcessInfo.processInfo.environment["GITHUB_ACTIONS"] == "true",
       CommandLine.arguments.count == 2,
-      let bitmap = NSBitmapImageRep(contentsOfFile: CommandLine.arguments[1]) else { exit(1) }
+      let data = try? Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[1])),
+      let bitmap = NSBitmapImageRep(data: data) else { exit(1) }
 var dark = 0, tinted = 0, total = 0
 for row in 2..<38 {
     for column in 1..<19 {
         let x = bitmap.pixelsWide * column / 20, y = bitmap.pixelsHigh * row / 40
-        guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { exit(1) }
+        guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(NSColorSpace.deviceRGB) else { exit(1) }
         let r = color.redComponent, g = color.greenComponent, b = color.blueComponent
         if max(r, max(g, b)) < 0.45 { dark += 1 }
         if g - r > 0.08 && g > 0.12 && b > r { tinted += 1 }
