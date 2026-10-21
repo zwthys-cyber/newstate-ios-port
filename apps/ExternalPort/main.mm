@@ -87,7 +87,7 @@ static void NSPLaunchReport(NSString *phase,NSString *message,int error,pid_t ch
 static NSDictionary *NSPDefaults(void) {
     return @{@"sampling":@NO,@"characters":@YES,@"vehicles":@YES,@"items":@NO,
         @"boxes":@YES,@"lines":@NO,@"health":@YES,@"distances":@YES,@"names":@YES,
-        @"crosshair":@YES,@"skeletons":@NO,@"orientation":@0,@"edge_indicators":@NO,@"health_bars":@YES};
+        @"crosshair":@YES,@"skeletons":@NO,@"orientation":@0,@"edge_indicators":@NO,@"health_bars":@YES,@"hud_status":@NO};
 }
 static NSDictionary *NSPCheckSpawn(BOOL root) {
     NSString *mode=root ? @"root" : @"mobile";
@@ -144,11 +144,13 @@ static CGRect NSPScreenBounds(void) {
     CGFloat width=self.bounds.size.width,height=self.bounds.size.height;
     CGContextRef c=UIGraphicsGetCurrentContext();
     if (!c) return;
-    NSString *status=[@"NSP · " stringByAppendingString:self.status?:@"外置显示"];
-    [status drawInRect:CGRectMake(12,10,MAX(0,width-24),52) withAttributes:@{
-        NSFontAttributeName:[UIFont monospacedSystemFontOfSize:12 weight:UIFontWeightSemibold],
-        NSForegroundColorAttributeName:UIColor.whiteColor,
-        NSBackgroundColorAttributeName:[UIColor.blackColor colorWithAlphaComponent:0.65]}];
+    if ([o[@"hud_status"] boolValue]) {
+        NSString *status=[@"NSP · " stringByAppendingString:self.status?:@"外置显示"];
+        [status drawInRect:CGRectMake(12,10,MAX(0,width-24),52) withAttributes:@{
+            NSFontAttributeName:[UIFont monospacedSystemFontOfSize:12 weight:UIFontWeightSemibold],
+            NSForegroundColorAttributeName:UIColor.whiteColor,
+            NSBackgroundColorAttributeName:[UIColor.blackColor colorWithAlphaComponent:0.65]}];
+    }
     if ([o[@"crosshair"] boolValue]) {
         CGContextSetStrokeColorWithColor(c,UIColor.whiteColor.CGColor);CGContextSetLineWidth(c,1);
         CGContextMoveToPoint(c,width/2-7,height/2);CGContextAddLineToPoint(c,width/2+7,height/2);
@@ -414,7 +416,7 @@ static void NSPStopCallback(CFNotificationCenterRef center,void *observer,CFStri
     for (NSArray *item in @[@[@"sampling",@"开启游戏读取"],@[@"characters",@"角色（包含队友）"],@[@"vehicles",@"载具"],
         @[@"items",@"物资位置"],@[@"boxes",@"胶囊轮廓方框"],@[@"lines",@"连线"],@[@"health",@"血量"],
         @[@"distances",@"距离"],@[@"names",@"姓名"],@[@"crosshair",@"中心准星"],@[@"skeletons",@"骨架（实验性）"],
-        @[@"health_bars",@"人物血量条"],@[@"edge_indicators",@"屏外角色方向（包含队友）"]]) {
+        @[@"health_bars",@"人物血量条"],@[@"edge_indicators",@"屏外角色方向（包含队友）"],@[@"hud_status",@"顶部 NSP 状态文字"]]) {
         UILabel *label=[UILabel new];label.text=item[1];label.numberOfLines=0;
         UISwitch *toggle=[UISwitch new];toggle.accessibilityIdentifier=item[0];toggle.on=[self.settings[item[0]] boolValue];
         [toggle addTarget:self action:@selector(toggle:) forControlEvents:UIControlEventValueChanged];
