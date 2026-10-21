@@ -48,8 +48,14 @@ bool RemoteReader::read(void *context,uint64_t address,void *buffer,size_t size)
     auto *self=static_cast<RemoteReader *>(context);
     if (!self->port) return false;
     vm_size_t copied=0;
-    return vm_read_overwrite(self->port,static_cast<vm_address_t>(address),static_cast<vm_size_t>(size),
-        reinterpret_cast<vm_address_t>(buffer),&copied)==KERN_SUCCESS && copied==size;
+    kern_return_t kr=vm_read_overwrite(self->port,static_cast<vm_address_t>(address),static_cast<vm_size_t>(size),
+        reinterpret_cast<vm_address_t>(buffer),&copied);
+    if (kr!=KERN_SUCCESS || copied!=size) {
+        self->memoryError=kr!=KERN_SUCCESS ? kr : KERN_FAILURE;
+        self->failedAddress=address;self->failedSize=size;self->copiedSize=copied;
+        return false;
+    }
+    return true;
 }
 void RemoteReader::reset() {
     sampler.reset();base=0;pid=0;
@@ -60,6 +66,7 @@ RemoteResult RemoteReader::sample(bool skeleton) {
     auto now=std::chrono::steady_clock::now();
     if (now<retryAfter) return lastFailure;
     RemoteResult result;
+    memoryError=0;failedAddress=failedSize=copiedSize=0;
     int found=0;
     if (pid>0 && port) {
         auto path=pidPathAPI();char buffer[4096]{};
@@ -94,9 +101,16 @@ RemoteResult RemoteReader::sample(bool skeleton) {
             result.error=kr;result.status="任务端口已取得，但远程镜像信息不可读取";reset();return result;
         }
         Memory memory{this,read,0};
-        base=findTargetImage(memory,info.all_image_info_addr);
+        result.dyldInfoAddress=info.all_image_info_addr;result.dyldInfoSize=info.all_image_info_size;
+        result.dyldInfoFormat=info.all_image_info_format;
+        if (info.all_image_info_format!=TASK_DYLD_ALL_IMAGE_INFO_64) {
+            result.images.stage="dyld_format_unsupported";result.status="目标镜像信息不是预期的 64 位格式";reset();return result;
+        }
+        base=findTargetImage(memory,info.all_image_info_addr,&result.images);
         if (!base) {
-            result.status="无法读取目标主程序，或 UUID 与适配样本不匹配";reset();return result;
+            result.error=memoryError;result.failedReadAddress=failedAddress;
+            result.failedReadSize=failedSize;result.copiedReadSize=copiedSize;
+            result.status="主程序定位失败："+result.images.stage;reset();return result;
         }
         sampler=std::make_unique<Sampler>(Memory{this,read,base});
     }

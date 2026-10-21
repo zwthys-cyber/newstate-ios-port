@@ -17,7 +17,7 @@
 extern char **environ;
 static NSString *NSPFolder;
 static NSString *const NSPStop=@"org.newstateport.external.stop";
-static NSString *const NSPVersion=@"0.2.3";
+static NSString *const NSPVersion=@"0.2.4";
 static NSString *const NSPStorage=@"/var/mobile/Library/Application Support/org.newstateport.External";
 
 @interface UIApplication (NSPPrivate)
@@ -288,6 +288,21 @@ static void NSPStopCallback(CFNotificationCenterRef center,void *observer,CFStri
                 NSMutableDictionary *extra=[@{@"sampling":@YES,@"target_pid":@(result.pid),
                     @"read_port_acquired":@(result.readPort),@"read_error":@(result.error),
                     @"hosting_call_returned":@YES} mutableCopy];
+                if (!result.images.stage.empty()) {
+                    NSMutableArray *uuids=[NSMutableArray array];
+                    for (const auto &uuid:result.images.executableUUIDs) [uuids addObject:[NSString stringWithUTF8String:uuid.c_str()]];
+                    const auto &d=result.images;
+                    extra[@"image_lookup"]=@{
+                        @"stage":[NSString stringWithUTF8String:d.stage.c_str()],
+                        @"expected_uuid":@"AF49432E-9F7F-3D7C-9470-8CF90E3B3378",@"executable_uuids":uuids,
+                        @"dyld_info_address":@(result.dyldInfoAddress),@"dyld_info_size":@(result.dyldInfoSize),
+                        @"dyld_info_format":@(result.dyldInfoFormat),@"dyld_version":@(d.version),
+                        @"image_count":@(d.count),@"image_array":@(d.array),@"images_scanned":@(d.scanned),
+                        @"unreadable_headers":@(d.unreadableHeaders),@"executable_headers":@(d.executableHeaders),
+                        @"command_read_failures":@(d.commandReadFailures),@"malformed_commands":@(d.malformedCommands),
+                        @"failed_read_address":@(result.failedReadAddress),@"failed_read_size":@(result.failedReadSize),
+                        @"copied_read_size":@(result.copiedReadSize),@"vm_read_error":@(result.error)};
+                }
                 if (result.snapshot) {
                     extra[@"camera_ready"]=@(result.snapshot->cameraReady);extra[@"markers"]=@(result.snapshot->markers.size());
                     extra[@"scanned"]=@(result.snapshot->scanned);extra[@"objects"]=@(result.snapshot->total);

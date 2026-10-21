@@ -26,13 +26,28 @@ struct Fixture {
 };
 int main() {
     Fixture f;
-    assert(nsport::findTargetImage(f.memory(),0x10000)==0x10200);
-    f.data[0x228]^=1;assert(!nsport::findTargetImage(f.memory(),0x10000));f.data[0x228]^=1;
+    nsport::ImageDiagnostics d;
+    assert(nsport::findTargetImage(f.memory(),0x10000,&d)==0x10200);
+    assert(d.stage=="matched" && d.count==2 && d.scanned==2 && d.unreadableHeaders==1);
+    assert(d.executableUUIDs.size()==1 && d.executableUUIDs[0]=="AF49432E-9F7F-3D7C-9470-8CF90E3B3378");
+    f.data[0x228]^=1;assert(!nsport::findTargetImage(f.memory(),0x10000,&d));
+    assert(d.stage=="executable_uuid_mismatch" && d.executableUUIDs[0]=="AE49432E-9F7F-3D7C-9470-8CF90E3B3378");
+    f.data[0x228]^=1;
     f.set<uint32_t>(0x20c,6);assert(!nsport::targetImage(f.memory(),0x10200));f.set<uint32_t>(0x20c,2);
     f.set<uint32_t>(0x214,0x10001);assert(!nsport::targetImage(f.memory(),0x10200));f.set<uint32_t>(0x214,24);
     f.set<uint32_t>(0x224,7);assert(!nsport::targetImage(f.memory(),0x10200));f.set<uint32_t>(0x224,25);
     assert(!nsport::targetImage(f.memory(),0x10200));f.set<uint32_t>(0x224,24);
     f.set<uint32_t>(4,2049);assert(!nsport::findTargetImage(f.memory(),0x10000));f.set<uint32_t>(4,2);
-    f.set<uint64_t>(8,0x1ffff);assert(!nsport::findTargetImage(f.memory(),0x10000));
-    std::cout<<"PASS: remote dyld list, exact target UUID, unreadable memory and malformed headers\n";
+    f.set<uint64_t>(8,0x1ffff);assert(!nsport::findTargetImage(f.memory(),0x10000,&d));
+    assert(d.stage=="dyld_array_unreadable" && d.scanned==0);
+    f.set<uint64_t>(8,0);assert(!nsport::findTargetImage(f.memory(),0x10000,&d));
+    assert(d.stage=="dyld_list_updating_or_empty");
+    assert(!nsport::findTargetImage(f.memory(),0x1ffff,&d));
+    assert(d.stage=="dyld_header_unreadable");
+    Fixture many;
+    many.set<uint32_t>(4,280);many.set<uint64_t>(8,0x10400);
+    many.set<uint64_t>(0x400+279*24,0x10200);
+    assert(nsport::findTargetImage(many.memory(),0x10000,&d)==0x10200);
+    assert(d.scanned==280 && d.stage=="matched");
+    std::cout<<"PASS: full bounded dyld list beyond 256 images; exact/mismatched UUID diagnostics; unreadable header/array; updating list; malformed commands\n";
 }
