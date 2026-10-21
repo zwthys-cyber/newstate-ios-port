@@ -28,6 +28,17 @@ xcrun --sdk iphoneos clang -arch arm64 -isysroot "$task_sdk_path" -miphoneos-ver
 xcrun --sdk iphoneos clang++ "${task_flags[@]}" -fobjc-arc apps/ExternalPort/MemoryCheck.mm \
   -framework Foundation -framework Security -o "$task_app_path/NSPMemoryCheck"
 cp apps/ExternalPort/Info.plist "$task_app_path/Info.plist"
+swift scripts/render-brand.swift build/Brand.xcassets/AppIcon.appiconset
+xcrun actool build/Brand.xcassets --compile "$task_app_path" --platform iphoneos \
+  --minimum-deployment-target 17.0 --target-device iphone --target-device ipad --app-icon AppIcon \
+  --output-partial-info-plist build/brand-info.plist --output-format human-readable-text
+python3 - "$task_app_path/Info.plist" <<'PY'
+import plistlib,sys
+from pathlib import Path
+p=Path(sys.argv[1]);info=plistlib.loads(p.read_bytes())
+info.update(plistlib.loads(Path('build/brand-info.plist').read_bytes()))
+p.write_bytes(plistlib.dumps(info))
+PY
 cp apps/ExternalPort/ThirdPartyNotices.txt "$task_app_path/ThirdPartyNotices.txt"
 plutil -lint "$task_app_path/Info.plist" apps/ExternalPort/Entitlements.plist apps/ExternalPort/HUDEntitlements.plist apps/ExternalPort/ProbeEntitlements.plist apps/ExternalPort/MemoryCheckEntitlements.plist
 codesign --force --sign - --timestamp=none --pagesize 4096 --generate-entitlement-der \

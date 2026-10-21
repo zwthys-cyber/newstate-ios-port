@@ -52,6 +52,10 @@ with zipfile.ZipFile('out/NSPExternal.ipa') as z:
     prefix='Payload/NSPExternal.app/'
     info=plistlib.loads(z.read(prefix+'Info.plist'))
     assert info['CFBundleIdentifier']=='org.newstateport.External' and info['MinimumOSVersion']=='17.0'
+    assert info['CFBundleShortVersionString']=='0.3.0' and info['CFBundleDisplayName']=='NSP Pro'
+    assert info['CFBundleIcons']['CFBundlePrimaryIcon']['CFBundleIconName']=='AppIcon'
+    assert prefix+'Assets.car' in z.namelist()
+    assert prefix+'AppIcon60x60@3x.png' in z.namelist()
     assert z.read(prefix+'ThirdPartyNotices.txt')==pathlib.Path('apps/ExternalPort/ThirdPartyNotices.txt').read_bytes()
     binaries={name:z.read(prefix+name) for name in ('NSPExternal','NSPExternalHUD','NSPSpawnProbe','NSPMemoryCheck')}
 def verify_binary(data,expected_ent):
@@ -106,7 +110,8 @@ report=dict(app_version=info['CFBundleShortVersionString'],bundle_id=info['CFBun
     separate_containerless_hud=True,containerless_launcher=True,
     no_embedded_game_or_plugins=True,archive_crc_verified=True,developer_mode_test_condition='off',
     on_device_tested=False,external_read_permission_verified=False,cross_app_overlay_verified=False,
-    game_files_modified=False,game_memory_writes=False)
+    game_files_modified=False,game_memory_writes=False,app_icon_verified=True,
+    controller_ui='NSP Pro: overview/display/tools',settings_preserved_on_upgrade=True)
 pathlib.Path('out/external-build-info.json').write_text(json.dumps({**report,'commit':os.environ['GITHUB_SHA'],
     'run_url':f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}"},indent=2)+'\n')
 print(json.dumps(report,indent=2))

@@ -17,8 +17,12 @@
 extern char **environ;
 static NSString *NSPFolder;
 static NSString *const NSPStop=@"org.newstateport.external.stop";
-static NSString *const NSPVersion=@"0.2.6";
+static NSString *const NSPVersion=@"0.3.0";
+#ifdef NSP_UI_PREVIEW
+static NSString *const NSPStorage=@"";
+#else
 static NSString *const NSPStorage=@"/var/mobile/Library/Application Support/org.newstateport.External";
+#endif
 
 @interface UIApplication (NSPPrivate)
 - (void)_accessibilityInit;
@@ -87,7 +91,22 @@ static void NSPLaunchReport(NSString *phase,NSString *message,int error,pid_t ch
 static NSDictionary *NSPDefaults(void) {
     return @{@"sampling":@NO,@"characters":@YES,@"vehicles":@YES,@"items":@NO,
         @"boxes":@YES,@"lines":@NO,@"health":@YES,@"distances":@YES,@"names":@YES,
-        @"crosshair":@YES,@"skeletons":@NO,@"orientation":@0,@"edge_indicators":@NO,@"health_bars":@YES,@"hud_status":@NO};
+        @"crosshair":@YES,@"skeletons":@NO,@"orientation":@0,@"edge_indicators":@NO,@"health_bars":@YES,@"hud_status":@NO,
+        @"label_scale":@1.0,@"overlay_opacity":@1.0,@"line_width":@1.2};
+}
+static NSDictionary *NSPSettings(void) {
+    NSMutableDictionary *settings=[NSPDefaults() mutableCopy];
+    NSDictionary *stored=NSPReadJSON(@"settings.json");
+    for (NSString *key in settings.allKeys) {
+        id value=stored[key];if (![value isKindOfClass:NSNumber.class]) continue;
+        double number=[value doubleValue];if (!std::isfinite(number)) continue;
+        if ([key isEqualToString:@"label_scale"]) settings[key]=@(MAX(0.8,MIN(1.3,number)));
+        else if ([key isEqualToString:@"overlay_opacity"]) settings[key]=@(MAX(0.35,MIN(1.0,number)));
+        else if ([key isEqualToString:@"line_width"]) settings[key]=@(MAX(0.6,MIN(2.0,number)));
+        else if ([key isEqualToString:@"orientation"]) settings[key]=@(MAX(0,MIN(2,[value integerValue])));
+        else settings[key]=@([value boolValue]);
+    }
+    return settings;
 }
 static NSDictionary *NSPCheckSpawn(BOOL root) {
     NSString *mode=root ? @"root" : @"mobile";
@@ -141,6 +160,8 @@ static CGRect NSPScreenBounds(void) {
 - (void)drawRect:(CGRect)rect {
     (void)rect;
     NSDictionary *o=self.options?:NSPDefaults();
+    CGFloat labelScale=MAX(0.8,MIN(1.3,o[@"label_scale"] ? [o[@"label_scale"] doubleValue] : 1.0));
+    CGFloat lineWidth=MAX(0.6,MIN(2.0,o[@"line_width"] ? [o[@"line_width"] doubleValue] : 1.2));
     CGFloat width=self.bounds.size.width,height=self.bounds.size.height;
     CGContextRef c=UIGraphicsGetCurrentContext();
     if (!c) return;
@@ -178,13 +199,13 @@ static CGRect NSPScreenBounds(void) {
                 if ([o[@"distances"] boolValue]) {
                     NSString *distance=[NSString stringWithFormat:@"%.0fm",nsport::distance(marker.position,snapshot->camera.position)/100];
                     [distance drawAtPoint:CGPointMake(x-dx*20-18,y-dy*20-6) withAttributes:@{
-                        NSFontAttributeName:[UIFont monospacedSystemFontOfSize:10 weight:UIFontWeightSemibold],
+                        NSFontAttributeName:[UIFont monospacedSystemFontOfSize:10*labelScale weight:UIFontWeightSemibold],
                         NSForegroundColorAttributeName:color,NSBackgroundColorAttributeName:[UIColor.blackColor colorWithAlphaComponent:0.55]}];
                 }
             }
             continue;
         }
-        CGContextSetStrokeColorWithColor(c,color.CGColor);CGContextSetLineWidth(c,1.2);
+        CGContextSetStrokeColorWithColor(c,color.CGColor);CGContextSetLineWidth(c,lineWidth);
         if ([o[@"skeletons"] boolValue]) {
             for (const auto &bone:marker.bones) {
                 nsport::Point a,b;
@@ -217,12 +238,12 @@ static CGRect NSPScreenBounds(void) {
         if ([o[@"distances"] boolValue]) [label appendFormat:@" %.0fm",nsport::distance(marker.position,snapshot->camera.position)/100];
         if ([o[@"health"] boolValue] && marker.hasHealth) [label appendFormat:@" %.0f/%.0f",marker.health,marker.maximum];
         [label drawAtPoint:CGPointMake(p.x+5,p.y+3) withAttributes:@{
-            NSFontAttributeName:[UIFont monospacedSystemFontOfSize:11 weight:UIFontWeightSemibold],
+            NSFontAttributeName:[UIFont monospacedSystemFontOfSize:11*labelScale weight:UIFontWeightSemibold],
             NSForegroundColorAttributeName:color,NSBackgroundColorAttributeName:[UIColor.blackColor colorWithAlphaComponent:0.55]}];
         float fraction=0;
         if (marker.kind==nsport::Kind::character && [o[@"health_bars"] boolValue] && marker.hasHealth &&
             nsport::healthFraction(marker.health,marker.maximum,fraction)) {
-            CGRect bar=CGRectMake(p.x+5,p.y+19,48,4);
+            CGRect bar=CGRectMake(p.x+5,p.y+3+16*labelScale,48*labelScale,4);
             CGContextSetFillColorWithColor(c,[UIColor.blackColor colorWithAlphaComponent:0.75].CGColor);CGContextFillRect(c,bar);
             UIColor *fill=fraction<=0.25f ? UIColor.systemRedColor : fraction<=0.5f ? UIColor.systemOrangeColor : UIColor.systemGreenColor;
             CGContextSetFillColorWithColor(c,fill.CGColor);CGContextFillRect(c,CGRectMake(bar.origin.x,bar.origin.y,bar.size.width*fraction,bar.size.height));
@@ -293,9 +314,10 @@ static void NSPStopCallback(CFNotificationCenterRef center,void *observer,CFStri
     NSTimeInterval uptime=NSProcessInfo.processInfo.systemUptime;
     NSDictionary *settings=self.canvas.options;
     if (!settings || uptime-_lastSettingsLoad>=0.25) {
-        settings=NSPReadJSON(@"settings.json")?:NSPDefaults();_lastSettingsLoad=uptime;
+        settings=NSPSettings();_lastSettingsLoad=uptime;
     }
     self.canvas.options=settings;
+    self.canvas.alpha=MAX(0.35,MIN(1.0,settings[@"overlay_opacity"] ? [settings[@"overlay_opacity"] doubleValue] : 1.0));
     CGSize screen=self.window.bounds.size;NSInteger orientation=[settings[@"orientation"] integerValue];
     self.canvas.transform=CGAffineTransformIdentity;
     self.canvas.bounds=CGRectMake(0,0,orientation==2 ? screen.width : screen.height,orientation==2 ? screen.height : screen.width);
@@ -379,77 +401,9 @@ static void NSPStopCallback(CFNotificationCenterRef center,void *observer,CFStri
 }
 @end
 
-@interface NSPControl : UIViewController
-@property(nonatomic,strong) NSMutableDictionary *settings;
-@property(nonatomic,strong) UILabel *status;
-@property(nonatomic,strong) NSTimer *timer;
-@property(nonatomic) BOOL checkingMemory;
-@end
-@implementation NSPControl
-- (void)viewDidLoad {
-    [super viewDidLoad];self.title=@"NSP 外置显示";self.view.backgroundColor=UIColor.systemBackgroundColor;
-    self.settings=[NSPDefaults() mutableCopy];
-    [self.settings addEntriesFromDictionary:NSPReadJSON(@"settings.json")?:@{}];
-    UIScrollView *scroll=[UIScrollView new];scroll.translatesAutoresizingMaskIntoConstraints=NO;[self.view addSubview:scroll];
-    UIStackView *stack=[UIStackView new];stack.axis=UILayoutConstraintAxisVertical;stack.spacing=12;
-    stack.translatesAutoresizingMaskIntoConstraints=NO;[scroll addSubview:stack];
-    UILayoutGuide *safe=self.view.safeAreaLayoutGuide;
-    [NSLayoutConstraint activateConstraints:@[
-        [scroll.topAnchor constraintEqualToAnchor:safe.topAnchor],[scroll.bottomAnchor constraintEqualToAnchor:safe.bottomAnchor],
-        [scroll.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor],[scroll.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor],
-        [stack.topAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.topAnchor constant:16],
-        [stack.bottomAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.bottomAnchor constant:-24],
-        [stack.leadingAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.leadingAnchor constant:16],
-        [stack.trailingAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.trailingAnchor constant:-16],
-        [stack.widthAnchor constraintEqualToAnchor:scroll.frameLayoutGuide.widthAnchor constant:-32]]];
-    UILabel *intro=[UILabel new];intro.numberOfLines=0;intro.font=[UIFont preferredFontForTextStyle:UIFontTextStyleBody];
-    intro.text=@"NEW STATE 0.9.98（804）\nTrollStore · iOS 17.0 · 保持开发者模式关闭\n先启动悬浮层检查显示，再开启游戏读取。外置读取与跨应用显示尚待实机验证。";
-    [stack addArrangedSubview:intro];
-    self.status=[UILabel new];self.status.numberOfLines=0;self.status.font=[UIFont monospacedSystemFontOfSize:12 weight:UIFontWeightRegular];
-    [stack addArrangedSubview:self.status];
-    for (NSArray *item in @[@[@"启动悬浮层",@"startHUD"],@[@"停止悬浮层",@"stopHUD"],
-        @[@"内存权限实测（不改游戏数据）",@"checkMemory"],@[@"导出状态",@"shareStatus"]]) {
-        UIButton *button=[UIButton buttonWithType:UIButtonTypeSystem];[button setTitle:item[0] forState:UIControlStateNormal];
-        [button addTarget:self action:NSSelectorFromString(item[1]) forControlEvents:UIControlEventTouchUpInside];[stack addArrangedSubview:button];
-    }
-    UISegmentedControl *orientation=[[UISegmentedControl alloc] initWithItems:@[@"横屏左",@"横屏右",@"竖屏"]];
-    orientation.selectedSegmentIndex=[self.settings[@"orientation"] integerValue];
-    [orientation addTarget:self action:@selector(orientationChanged:) forControlEvents:UIControlEventValueChanged];[stack addArrangedSubview:orientation];
-    for (NSArray *item in @[@[@"sampling",@"开启游戏读取"],@[@"characters",@"角色（包含队友）"],@[@"vehicles",@"载具"],
-        @[@"items",@"物资位置"],@[@"boxes",@"胶囊轮廓方框"],@[@"lines",@"连线"],@[@"health",@"血量"],
-        @[@"distances",@"距离"],@[@"names",@"姓名"],@[@"crosshair",@"中心准星"],@[@"skeletons",@"骨架（实验性）"],
-        @[@"health_bars",@"人物血量条"],@[@"edge_indicators",@"屏外角色方向（包含队友）"],@[@"hud_status",@"顶部 NSP 状态文字"]]) {
-        UILabel *label=[UILabel new];label.text=item[1];label.numberOfLines=0;
-        UISwitch *toggle=[UISwitch new];toggle.accessibilityIdentifier=item[0];toggle.on=[self.settings[item[0]] boolValue];
-        [toggle addTarget:self action:@selector(toggle:) forControlEvents:UIControlEventValueChanged];
-        UIStackView *row=[[UIStackView alloc] initWithArrangedSubviews:@[label,toggle]];row.axis=UILayoutConstraintAxisHorizontal;
-        row.alignment=UIStackViewAlignmentCenter;row.spacing=12;[stack addArrangedSubview:row];
-    }
-    UILabel *scope=[UILabel new];scope.numberOfLines=0;scope.font=[UIFont preferredFontForTextStyle:UIFontTextStyleFootnote];
-    scope.text=@"尚未实现：队伍区分、自瞄、后坐力修改、去雾、检测屏蔽。\n原游戏文件保持不变。本工具不保证游戏接受外部读取。\n窗口方向不合适时切换横屏方向。停止按钮只结束本工具的悬浮进程。\nHUD 启动方式参考 Lessica/TrollSpeed（MIT），许可随包提供。";[stack addArrangedSubview:scope];
-    __weak NSPControl *weak=self;
-    self.timer=[NSTimer scheduledTimerWithTimeInterval:1 repeats:YES block:^(NSTimer *timer) {(void)timer;[weak refresh];}];
-    [self save];
-    if (!NSPReadJSON(@"launch.json")) NSPLaunchReport(@"idle",@"尚未尝试启动悬浮进程",0,0,nil);
-    [self refresh];
-}
-- (void)save {NSPWriteJSON(@"settings.json",self.settings);}
-- (void)toggle:(UISwitch *)sender {self.settings[sender.accessibilityIdentifier]=@(sender.on);[self save];}
-- (void)orientationChanged:(UISegmentedControl *)sender {self.settings[@"orientation"]=@(sender.selectedSegmentIndex);[self save];}
-- (void)refresh {
-    NSDictionary *report=NSPReadJSON(@"status.json");
-    NSDictionary *launch=NSPReadJSON(@"launch.json");
-    NSTimeInterval stamp=[report[@"time"] doubleValue];
-    NSString *age=stamp ? [NSString stringWithFormat:@"%.0f 秒前",MAX(0,NSDate.date.timeIntervalSince1970-stamp)] : @"无记录";
-    NSString *hud=report ? [NSString stringWithFormat:@"%@\n更新：%@ · 读取错误：%@\n相机：%@ · 标记：%@",
-        report[@"status"]?:@"",age,report[@"read_error"]?:@0,report[@"camera_ready"]?:@NO,report[@"markers"]?:@0] : @"悬浮层尚未启动";
-    self.status.text=launch ? [NSString stringWithFormat:@"启动记录：%@\n阶段：%@ · 错误码：%@\n%@",
-        launch[@"status"]?:@"",launch[@"phase"]?:@"",launch[@"error_code"]?:@0,hud] : hud;
-    NSDictionary *memory=NSPReadJSON(@"memory-check.json");
-    NSDictionary *memoryLaunch=NSPReadJSON(@"memory-check-launch.json");
-    if (memoryLaunch) self.status.text=[self.status.text stringByAppendingFormat:@"\n权限实测：%@ · %@",
-        memoryLaunch[@"status"]?:@"",memory[@"stage"]?:@"尚未进入验证程序"];
-}
+#include "ControlPanel.inc"
+
+@implementation NSPControl (Runtime)
 - (void)checkMemory {
     if (self.checkingMemory) return;
     self.checkingMemory=YES;
@@ -496,11 +450,20 @@ static void NSPStopCallback(CFNotificationCenterRef center,void *observer,CFStri
         });
     });
 }
-- (void)stopHUD {CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),(__bridge CFStringRef)NSPStop,NULL,NULL,true);}
+- (void)stopHUD {
+    ++self.launchGeneration;self.startingHUD=NO;
+    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),(__bridge CFStringRef)NSPStop,NULL,NULL,true);
+    NSPLaunchReport(@"stop_requested",@"已请求停止悬浮层",0,0,nil);[self refresh];
+}
 - (void)startHUD {
-    [self save];[self stopHUD];
+    if (self.startingHUD) return;
+    [self save];[self stopHUD];self.startingHUD=YES;
+    NSUInteger generation=self.launchGeneration;
     NSPLaunchReport(@"requested",@"正在启动外置进程…",0,0,nil);[self refresh];
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC),dispatch_get_main_queue(),^{[self spawnHUD];});
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,NSEC_PER_SEC),dispatch_get_main_queue(),^{
+        if (generation!=self.launchGeneration) return;
+        self.startingHUD=NO;[self spawnHUD];
+    });
 }
 - (void)spawnHUD {
     using Persona=int (*)(const posix_spawnattr_t *,uid_t,uint32_t);
@@ -583,7 +546,11 @@ static void NSPStopCallback(CFNotificationCenterRef center,void *observer,CFStri
         @"memory-check.json",@"memory-check-launch.json"]) {
         if ([NSFileManager.defaultManager fileExistsAtPath:NSPPath(name)]) [files addObject:[NSURL fileURLWithPath:NSPPath(name)]];
     }
-    if (!files.count) {self.status.text=@"暂无状态文件可导出";return;}
+    if (!files.count) {
+        UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"暂无诊断记录" message:@"启动悬浮层后再导出。" preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"知道了" style:UIAlertActionStyleDefault handler:nil]];
+        [self presentViewController:alert animated:YES completion:nil];return;
+    }
     UIActivityViewController *share=[[UIActivityViewController alloc] initWithActivityItems:files applicationActivities:nil];
     share.popoverPresentationController.sourceView=self.view;
     share.popoverPresentationController.sourceRect=CGRectMake(self.view.bounds.size.width/2,self.view.bounds.size.height/2,1,1);
@@ -641,7 +608,11 @@ int main(int argc,char *argv[]) {
         }
         return 6; // This executable is a HUD helper, not a second launcher app.
 #else
+#ifdef NSP_UI_PREVIEW
+        NSPFolder=[NSTemporaryDirectory() stringByAppendingPathComponent:@"NSPPreview"];
+#else
         NSPFolder=NSPStorage;
+#endif
         [NSFileManager.defaultManager createDirectoryAtPath:NSPFolder withIntermediateDirectories:YES attributes:nil error:nil];
         return UIApplicationMain(argc,argv,nil,NSStringFromClass(NSPAppDelegate.class));
 #endif
