@@ -21,6 +21,7 @@ jobs:
       - name: Test, build, sign and verify
         run: bash scripts/build-on-github.sh
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
         with:
           name: newstate-ios-port-${{ github.sha }}
           path: out/*

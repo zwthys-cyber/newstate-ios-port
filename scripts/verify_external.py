@@ -55,7 +55,9 @@ with zipfile.ZipFile('out/NSPExternal.ipa') as z:
     assert info['CFBundleShortVersionString']=='0.3.0' and info['CFBundleDisplayName']=='NSP Pro'
     assert info['CFBundleIcons']['CFBundlePrimaryIcon']['CFBundleIconName']=='AppIcon'
     assert prefix+'Assets.car' in z.namelist()
-    assert prefix+'AppIcon60x60@3x.png' in z.namelist()
+    # actool stores the 3x rendition in Assets.car; its standalone fallback is 2x.
+    icon=z.read(prefix+'AppIcon60x60@2x.png')
+    assert icon[:8]==b'\x89PNG\r\n\x1a\n' and struct.unpack_from('>II',icon,16)==(120,120)
     assert z.read(prefix+'ThirdPartyNotices.txt')==pathlib.Path('apps/ExternalPort/ThirdPartyNotices.txt').read_bytes()
     binaries={name:z.read(prefix+name) for name in ('NSPExternal','NSPExternalHUD','NSPSpawnProbe','NSPMemoryCheck')}
 def verify_binary(data,expected_ent):

@@ -565,6 +565,7 @@ static void NSPStopCallback(CFNotificationCenterRef center,void *observer,CFStri
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)options {
     (void)application;(void)options;
     self.window=[[UIWindow alloc] initWithFrame:NSPScreenBounds()];
+    self.window.overrideUserInterfaceStyle=UIUserInterfaceStyleDark;
     self.window.rootViewController=[[UINavigationController alloc] initWithRootViewController:[NSPControl new]];
     [self.window makeKeyAndVisible];return YES;
 }

@@ -241,7 +241,7 @@ static UIColor *NSPCardColor(void) {return [UIColor colorWithRed:0.075 green:0.1
 - (void)updateSliderValue:(NSString *)key {
     float value=[self.settings[key] floatValue];
     self.values[key].text=[key isEqualToString:@"overlay_opacity"] ? [NSString stringWithFormat:@"%.0f%%",value*100] :
-        [NSString stringWithFormat:@"%.1f×",value];
+        [key isEqualToString:@"line_width"] ? [NSString stringWithFormat:@"%.1f pt",value] : [NSString stringWithFormat:@"%.1f×",value];
 }
 - (void)sliderChanged:(UISlider *)sender {
     self.settings[sender.accessibilityIdentifier]=@(sender.value);[self updateSliderValue:sender.accessibilityIdentifier];[self save];
