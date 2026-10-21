@@ -1,0 +1,9 @@
+/build/
+/out/
+*.ipa
+*.apk
+*.zip
+*.dylib
+*.dSYM/
+__pycache__/
+.DS_Store
