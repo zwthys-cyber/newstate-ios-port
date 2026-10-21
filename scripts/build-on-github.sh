@@ -21,10 +21,17 @@ xcrun lipo out/NewStatePort.dylib -verify_arch arm64
 xcrun lipo -info out/NewStatePort.dylib | tee out/architecture.txt
 xcrun otool -L out/NewStatePort.dylib | tee out/dependencies.txt
 python3 scripts/verify_artifact.py out/NewStatePort.dylib | tee out/macho-verification.json
+# A separate injection-control library: no Objective-C, UIKit, UI or memory reads.
+xcrun --sdk iphoneos clang "${task_common[@]}" -x c++ -dynamiclib src/LoadProbe.cpp \
+  -Wl,-install_name,@rpath/NewStateLoadProbe.dylib -Wl,-dead_strip -o out/NewStateLoadProbe.dylib
+codesign --force --sign - --timestamp=none out/NewStateLoadProbe.dylib
+codesign --verify --strict --verbose=2 out/NewStateLoadProbe.dylib
+xcrun lipo out/NewStateLoadProbe.dylib -verify_arch arm64
+python3 scripts/verify_artifact.py out/NewStateLoadProbe.dylib '@rpath/NewStateLoadProbe.dylib' | tee out/probe-verification.json
 python3 - <<'PY'
 import json,os,pathlib,subprocess
 data={
-  'plugin_version':'0.1.0','commit':os.environ['GITHUB_SHA'],
+  'plugin_version':'0.1.1','commit':os.environ['GITHUB_SHA'],
   'run_url':f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
   'runner_environment':os.environ['RUNNER_ENVIRONMENT'],
   'compiler':subprocess.check_output(['xcrun','clang++','--version'],text=True).splitlines()[0],
@@ -32,7 +39,7 @@ data={
   'deployment_target':'17.0','user_reported_device_os':'26.6','installation':'inject into IPA, then re-sign',
   'target_game_version':'0.9.98','target_game_build':'804',
   'on_device_tested':False,'gameplay_features_verified':False,
-  'mode':'experimental-read-only-overlay','engine_function_calls':False,'game_memory_writes':False
+  'mode':'deferred-startup-read-only-overlay','engine_function_calls':False,'game_memory_writes':False
 }
 pathlib.Path('out/build-info.json').write_text(json.dumps(data,indent=2)+'\n')
 PY

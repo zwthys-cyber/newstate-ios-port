@@ -129,7 +129,13 @@ static void NSPLog(NSString *text) {
 @end
 @implementation NSPViewController
 - (BOOL)prefersStatusBarHidden {return YES;}
-- (UIInterfaceOrientationMask)supportedInterfaceOrientations {return UIInterfaceOrientationMaskLandscape;}
+- (UIInterfaceOrientationMask)supportedInterfaceOrientations {
+    for (UIWindow *window in self.view.window.windowScene.windows) {
+        if (window!=self.view.window && window.isKeyWindow && window.rootViewController)
+            return window.rootViewController.supportedInterfaceOrientations;
+    }
+    return UIInterfaceOrientationMaskAll;
+}
 @end
 
 @interface NSPController : NSObject {
@@ -165,8 +171,6 @@ static void NSPLog(NSString *text) {
 }
 - (void)install:(UIWindowScene *)scene {
     _queue=dispatch_queue_create("org.newstate.port.sampling",DISPATCH_QUEUE_SERIAL);
-    Memory memory{nullptr,NSPRead,(uint64_t)_dyld_get_image_header(0)};
-    _sampler=std::make_unique<Sampler>(memory);
     self.window=[[UIWindow alloc] initWithWindowScene:scene];
     self.window.frame=scene.coordinateSpace.bounds;
     self.window.windowLevel=UIWindowLevelNormal+10;
@@ -209,7 +213,7 @@ static void NSPLog(NSString *text) {
         [stack.trailingAnchor constraintEqualToAnchor:scroll.contentLayoutGuide.trailingAnchor],
         [stack.widthAnchor constraintEqualToAnchor:scroll.frameLayoutGuide.widthAnchor]]];
     self.status=[UILabel new];self.status.font=[UIFont systemFontOfSize:12];self.status.textColor=UIColor.whiteColor;self.status.numberOfLines=0;
-    self.status.text=@"NEW STATE 0.9.98 · 只读适配 0.1.0\n关闭：点击开关开始采样";[stack addArrangedSubview:self.status];
+    self.status.text=@"NEW STATE 0.9.98 · 只读适配 0.1.1\n关闭：点击开关开始采样";[stack addArrangedSubview:self.status];
     [stack addArrangedSubview:[self switchRow:@"开启只读显示" selector:@selector(enabledChanged:) on:NO]];
     [stack addArrangedSubview:[self switchRow:@"其他角色（包含队友）" selector:@selector(charactersChanged:) on:YES]];
     [stack addArrangedSubview:[self switchRow:@"载具" selector:@selector(vehiclesChanged:) on:YES]];
@@ -252,6 +256,11 @@ static void NSPLog(NSString *text) {
 }
 - (void)togglePanel {self.panel.hidden=!self.panel.hidden;}
 - (void)enabledChanged:(UISwitch *)sender {
+    if (sender.on && !_sampler) {
+        Memory memory{nullptr,NSPRead,(uint64_t)_dyld_get_image_header(0)};
+        _sampler=std::make_unique<Sampler>(memory);
+        NSPLog(@"sampler created by user request");
+    }
     self.enabled=sender.on;
     if (!sender.on) {self.overlay.snapshot=nullptr;self.status.text=@"只读显示已关闭";[self.overlay setNeedsDisplay];}
 }
@@ -266,7 +275,7 @@ static void NSPLog(NSString *text) {
 - (void)crosshairChanged:(UISwitch *)s {self.overlay.crosshair=s.on;[self.overlay setNeedsDisplay];}
 - (void)skeletonsChanged:(UISwitch *)s {self.overlay.skeletons=s.on;[self.overlay setNeedsDisplay];}
 - (void)shareStatus {
-    NSMutableDictionary *report=[@{@"plugin_version":@"0.1.0",@"device_system":UIDevice.currentDevice.systemVersion,
+    NSMutableDictionary *report=[@{@"plugin_version":@"0.1.1",@"device_system":UIDevice.currentDevice.systemVersion,
         @"game_version":@"0.9.98",@"game_build":@"804",@"expected_uuid":NSPUUID,
         @"status":self.status.text?:@"",@"memory_writes":@NO,@"engine_calls":@NO} mutableCopy];
     auto snapshot=self.overlay.snapshot;
@@ -287,24 +296,58 @@ static void NSPLog(NSString *text) {
 @end
 
 static NSPController *NSPInstance;
-static void NSPInstall(void) {
-    if (NSPInstance) return;
-    for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
-        if ([scene isKindOfClass:UIWindowScene.class] && scene.activationState==UISceneActivationStateForegroundActive) {
-            NSPInstance=[NSPController new];[NSPInstance install:(UIWindowScene *)scene];return;
+static NSTimer *NSPStartupTimer;
+static NSUInteger NSPActiveTicks;
+static NSUInteger NSPStartupTicks;
+static void NSPStartupTick(void) {
+    ++NSPStartupTicks;
+    if (UIApplication.sharedApplication.applicationState!=UIApplicationStateActive) {
+        NSPActiveTicks=0;
+    } else {
+        ++NSPActiveTicks;
+    }
+    // Wait for ten consecutive active seconds; never install from a dyld initializer.
+    if (NSPActiveTicks>=10) {
+        for (UIScene *scene in UIApplication.sharedApplication.connectedScenes) {
+            if (![scene isKindOfClass:UIWindowScene.class] || scene.activationState!=UISceneActivationStateForegroundActive) continue;
+            NSPLog(@"phase: overlay install begin (sampler absent)");
+            NSPController *candidate=[NSPController new];
+            @try {
+                [candidate install:(UIWindowScene *)scene];
+                NSPInstance=candidate;
+            } @catch (NSException *exception) {
+                candidate.window.hidden=YES;
+                NSPLog([NSString stringWithFormat:@"phase: overlay exception %@: %@",exception.name,exception.reason]);
+            }
+            [NSPStartupTimer invalidate];NSPStartupTimer=nil;
+            return;
+        }
+    }
+    if (NSPStartupTicks>=120) {
+        NSPLog(@"phase: startup timed out; no active UIWindowScene; overlay not installed");
+        [NSPStartupTimer invalidate];NSPStartupTimer=nil;
+    }
+}
+static void NSPBootstrap(void) {
+    @autoreleasepool {
+        // All Foundation/UIKit work begins on the main queue after image initialization.
+        if (![NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.pubg.newstate"]) return;
+        NSPLog(@"NewStatePort 0.1.1 phase: main queue reached");
+        @try {
+            NSString *reason=NSPValidate();
+            NSPLog([NSString stringWithFormat:@"phase: identity %@; iOS %@",reason?:@"matched",UIDevice.currentDevice.systemVersion]);
+            if (reason) return;
+            NSPStartupTimer=[NSTimer scheduledTimerWithTimeInterval:1 repeats:YES block:^(NSTimer *timer) {
+                (void)timer;
+                @autoreleasepool {NSPStartupTick();}
+            }];
+            NSPLog(@"phase: waiting for ten active seconds");
+        } @catch (NSException *exception) {
+            NSPLog([NSString stringWithFormat:@"phase: bootstrap exception %@: %@",exception.name,exception.reason]);
         }
     }
 }
 __attribute__((constructor)) static void NSPEntry(void) {
-    @autoreleasepool {
-        if (![NSBundle.mainBundle.bundleIdentifier isEqualToString:@"com.pubg.newstate"]) return;
-        NSString *reason=NSPValidate();
-        NSPLog([NSString stringWithFormat:@"NewStatePort 0.1.0 loaded; iOS %@; %@",UIDevice.currentDevice.systemVersion,reason?:@"target identity matched"]);
-        if (reason) return;
-        dispatch_async(dispatch_get_main_queue(),^{
-            [NSNotificationCenter.defaultCenter addObserverForName:UIApplicationDidBecomeActiveNotification object:nil
-                queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *notification) {(void)notification;NSPInstall();}];
-            dispatch_after(dispatch_time(DISPATCH_TIME_NOW,3*NSEC_PER_SEC),dispatch_get_main_queue(),^{NSPInstall();});
-        });
-    }
+    // Do not access UIKit, bundles, files or game memory while dyld runs constructors.
+    dispatch_async(dispatch_get_main_queue(),^{NSPBootstrap();});
 }

@@ -35,8 +35,10 @@ assert platform==2, 'must target iOS device, not simulator or macOS'
 assert minimum==0x110000, 'deployment target must be iOS 17.0'
 assert sdk and sdk>=minimum
 assert signature and constructor
-assert identity=='@rpath/NewStatePort.dylib'
+assert identity==(sys.argv[2] if len(sys.argv)>2 else '@rpath/NewStatePort.dylib')
 assert deps and all(d.startswith(('/System/Library/Frameworks/','/usr/lib/')) for d in deps), deps
+if path.name=='NewStateLoadProbe.dylib':
+    assert all(d.startswith('/usr/lib/') for d in deps), 'probe must not link frameworks'
 print(json.dumps(dict(architecture='arm64',platform='iOS',minimum_os='17.0',
     sdk=f'{sdk>>16}.{(sdk>>8)&255}.{sdk&255}',install_name=identity,dependencies=deps,
     embedded_signature=True,constructor=True,on_device_tested=False),indent=2))
