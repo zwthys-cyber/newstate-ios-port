@@ -42,9 +42,15 @@ assert constructor
 assert identity==(sys.argv[2] if len(sys.argv)>2 else '@rpath/NewStatePort.dylib')
 assert deps and all(d.startswith(('/System/Library/Frameworks/','/usr/lib/')) for d in deps), deps
 if injector_sign:
-    assert path.name in ('NewStateLoadProbe-InjectorSign.dylib','NewStateStartupTrace-InjectorSign.dylib')
+    expected_names={
+        'NewStateLoadProbe-InjectorSign.dylib':'@rpath/NewStateLoadProbe.dylib',
+        'NewStateStartupTrace-InjectorSign.dylib':'@rpath/NewStateStartupTrace.dylib',
+        'NewStatePort-InjectorSign.dylib':'@rpath/NewStatePort.dylib',
+    }
+    assert path.name in expected_names and identity==expected_names[path.name]
     assert signature_offset is None, 'injector-sign variant must have no LC_CODE_SIGNATURE'
-    assert all(d.startswith('/usr/lib/') for d in deps), 'probe must not link frameworks'
+    if path.name!='NewStatePort-InjectorSign.dylib':
+        assert all(d.startswith('/usr/lib/') for d in deps), 'probe must not link frameworks'
     print(json.dumps(dict(architecture='arm64',platform='iOS',minimum_os='17.0',
         install_name=identity,dependencies=deps,embedded_signature=False,constructor=True,
         requires_injector_signing=True,on_device_tested=False),indent=2))

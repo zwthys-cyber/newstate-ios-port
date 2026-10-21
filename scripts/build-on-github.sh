@@ -35,6 +35,10 @@ cp out/NewStateLoadProbe.dylib out/NewStateLoadProbe-InjectorSign.dylib
 codesign --remove-signature out/NewStateLoadProbe-InjectorSign.dylib
 python3 scripts/verify_artifact.py out/NewStateLoadProbe-InjectorSign.dylib '@rpath/NewStateLoadProbe.dylib' --injector-sign | tee out/injector-sign-verification.json
 python3 tests/unsigned_probe_test.py out/NewStateLoadProbe.dylib out/NewStateLoadProbe-InjectorSign.dylib | tee out/injector-sign-regression.txt
+cp out/NewStatePort.dylib out/NewStatePort-InjectorSign.dylib
+codesign --remove-signature out/NewStatePort-InjectorSign.dylib
+python3 scripts/verify_artifact.py out/NewStatePort-InjectorSign.dylib '@rpath/NewStatePort.dylib' --injector-sign | tee out/port-injector-sign-verification.json
+python3 tests/unsigned_probe_test.py out/NewStatePort.dylib out/NewStatePort-InjectorSign.dylib | tee out/port-injector-sign-regression.txt
 # Diagnose whether constructors and the main queue execute; sign on the injector.
 xcrun --sdk iphoneos clang -arch arm64 -isysroot "$task_sdk_path" -miphoneos-version-min=17.0 \
   -std=c11 -fblocks -O2 -Wall -Wextra -Werror -fvisibility=hidden \
@@ -53,6 +57,8 @@ data={
   'sdk':subprocess.check_output(['xcrun','--sdk','iphoneos','--show-sdk-version'],text=True).strip(),
   'deployment_target':'17.0','user_reported_device_os':'17.0','installation':'TrollFools 4.2 (227) injection',
   'signature_page_size':4096,
+  'device_test_condition':'keep Developer Mode off per user feedback',
+  'port_injector_sign_variant':'NewStatePort-InjectorSign.dylib',
   'injector_sign_variant':'NewStateLoadProbe-InjectorSign.dylib',
   'injector_sign_variant_on_device_tested':False,
   'startup_trace_variant':'NewStateStartupTrace-InjectorSign.dylib',
