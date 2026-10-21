@@ -167,8 +167,11 @@ static int selfTest() {
     *static_cast<uint64_t *>(page)=Original;
     NSDictionary *result=scratchTransaction(mach_task_self(),reinterpret_cast<uint64_t>(page));
     bool ok=[result[@"write_confirmed"] boolValue] && [result[@"restored"] boolValue] && *static_cast<uint64_t *>(page)==Original;
+    *static_cast<uint64_t *>(page)=123;
+    NSDictionary *mismatch=scratchTransaction(mach_task_self(),reinterpret_cast<uint64_t>(page));
+    ok=ok && ![mismatch[@"write_attempted"] boolValue] && *static_cast<uint64_t *>(page)==123;
     munmap(page,static_cast<size_t>(getpagesize()));
-    if (ok) puts("PASS: actual vm_write/readback/restore in the host probe's own private allocation; no game involved");
+    if (ok) puts("PASS: actual vm_write/readback/restore in own private allocation; mismatched initial value prevents writing; no game involved");
     return ok ? 0 : 1;
 }
 int main(int argc,char **argv) {
