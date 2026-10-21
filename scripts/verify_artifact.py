@@ -29,7 +29,7 @@ for _ in range(ncmds):
         for i in range(count):
             so=cursor+72+80*i
             name=data[so:so+16].split(b'\0')[0]
-            if name==b'__mod_init_func' and struct.unpack_from('<Q',data,so+40)[0]>0:constructor=True
+            if name in (b'__mod_init_func',b'__init_offsets') and struct.unpack_from('<Q',data,so+40)[0]>0:constructor=True
     cursor+=size
 assert platform==2, 'must target iOS device, not simulator or macOS'
 assert minimum==0x110000, 'deployment target must be iOS 17.0'

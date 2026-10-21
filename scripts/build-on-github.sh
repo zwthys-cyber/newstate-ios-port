@@ -13,8 +13,8 @@ task_common=(-arch arm64 -isysroot "$task_sdk_path" -miphoneos-version-min=17.0 
 xcrun --sdk iphoneos clang++ "${task_common[@]}" -c src/PortCore.cpp -o build/PortCore.o
 xcrun --sdk iphoneos clang++ "${task_common[@]}" -fobjc-arc -c src/Plugin.mm -o build/Plugin.o
 xcrun --sdk iphoneos clang++ "${task_common[@]}" -dynamiclib build/PortCore.o build/Plugin.o \
-  -framework Foundation -framework UIKit \
-  -Wl,-install_name,@rpath/NewStatePort.dylib -Wl,-dead_strip -Wl,-undefined,error -o out/NewStatePort.dylib
+  -framework Foundation -framework UIKit -framework CoreGraphics \
+  -Wl,-install_name,@rpath/NewStatePort.dylib -Wl,-dead_strip -o out/NewStatePort.dylib
 codesign --force --sign - --timestamp=none out/NewStatePort.dylib
 codesign --verify --strict --verbose=2 out/NewStatePort.dylib 2>&1 | tee out/signature.txt
 xcrun lipo -verify_arch arm64 out/NewStatePort.dylib
