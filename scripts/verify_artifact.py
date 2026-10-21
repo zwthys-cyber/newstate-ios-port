@@ -5,6 +5,7 @@ import pathlib
 import struct
 import sys
 
+injector_sign="--injector-sign" in sys.argv[2:]
 path=pathlib.Path(sys.argv[1]);data=path.read_bytes()
 assert len(data)>=32 and data[:4]==b'\xcf\xfa\xed\xfe', 'not a thin Mach-O 64'
 _,cpu,subtype,filetype,ncmds,sizeofcmds,flags,reserved=struct.unpack_from('<8I',data)
@@ -37,7 +38,18 @@ for _ in range(ncmds):
 assert platform==2, 'must target iOS device, not simulator or macOS'
 assert minimum==0x110000, 'deployment target must be iOS 17.0'
 assert sdk and sdk>=minimum
-assert signature and constructor
+assert constructor
+assert identity==(sys.argv[2] if len(sys.argv)>2 else '@rpath/NewStatePort.dylib')
+assert deps and all(d.startswith(('/System/Library/Frameworks/','/usr/lib/')) for d in deps), deps
+if injector_sign:
+    assert path.name=='NewStateLoadProbe-InjectorSign.dylib'
+    assert signature_offset is None, 'injector-sign variant must have no LC_CODE_SIGNATURE'
+    assert all(d.startswith('/usr/lib/') for d in deps), 'probe must not link frameworks'
+    print(json.dumps(dict(architecture='arm64',platform='iOS',minimum_os='17.0',
+        install_name=identity,dependencies=deps,embedded_signature=False,constructor=True,
+        requires_injector_signing=True,on_device_tested=False),indent=2))
+    sys.exit(0)
+assert signature
 # Require real, internally consistent 4 KiB CodeDirectory pages for TrollFools.
 # Presence of LC_CODE_SIGNATURE alone cannot detect the observed 16 KiB/4 KiB mismatch.
 magic,length,count=struct.unpack_from('>III',data,signature_offset)

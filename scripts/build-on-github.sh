@@ -29,6 +29,12 @@ codesign --verify --strict --verbose=2 out/NewStateLoadProbe.dylib
 xcrun lipo out/NewStateLoadProbe.dylib -verify_arch arm64
 python3 scripts/verify_artifact.py out/NewStateLoadProbe.dylib '@rpath/NewStateLoadProbe.dylib' | tee out/probe-verification.json
 python3 tests/signature_test.py out/NewStateLoadProbe.dylib | tee out/signature-regression.txt
+# Force the injector to take its unsigned-input signing path, rather than reuse
+# a CodeDirectory supplied by our toolchain. This is a diagnostic variant.
+cp out/NewStateLoadProbe.dylib out/NewStateLoadProbe-InjectorSign.dylib
+codesign --remove-signature out/NewStateLoadProbe-InjectorSign.dylib
+python3 scripts/verify_artifact.py out/NewStateLoadProbe-InjectorSign.dylib '@rpath/NewStateLoadProbe.dylib' --injector-sign | tee out/injector-sign-verification.json
+python3 tests/unsigned_probe_test.py out/NewStateLoadProbe.dylib out/NewStateLoadProbe-InjectorSign.dylib | tee out/injector-sign-regression.txt
 python3 - <<'PY'
 import json,os,pathlib,subprocess
 data={
@@ -39,6 +45,8 @@ data={
   'sdk':subprocess.check_output(['xcrun','--sdk','iphoneos','--show-sdk-version'],text=True).strip(),
   'deployment_target':'17.0','user_reported_device_os':'17.0','installation':'TrollFools 4.2 (227) injection',
   'signature_page_size':4096,
+  'injector_sign_variant':'NewStateLoadProbe-InjectorSign.dylib',
+  'injector_sign_variant_on_device_tested':False,
   'target_game_version':'0.9.98','target_game_build':'804',
   'on_device_tested':False,'gameplay_features_verified':False,
   'mode':'deferred-startup-read-only-overlay','engine_function_calls':False,'game_memory_writes':False
