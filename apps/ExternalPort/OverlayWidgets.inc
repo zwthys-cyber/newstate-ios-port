@@ -70,7 +70,7 @@ static __weak NSPWidgetLayer *NSPActiveWidgets;
     if ((self=[super initWithFrame:frame])) {
         self.backgroundColor=UIColor.clearColor;_activeIdentity=-1;self.placement=[NSMutableDictionary dictionary];
         self.radar=[NSPRadarView new];self.radar.backgroundColor=UIColor.clearColor;self.radar.opaque=NO;[self addSubview:self.radar];
-        self.button=[NSPFloatButton buttonWithType:UIButtonTypeCustom];self.button.backgroundColor=[UIColor colorWithWhite:0.08 alpha:0.9];
+        self.button=[[NSPFloatButton alloc] initWithFrame:CGRectZero];self.button.backgroundColor=[UIColor colorWithWhite:0.08 alpha:0.9];
         self.button.layer.cornerRadius=22;self.button.layer.borderWidth=1;self.button.layer.borderColor=UIColor.systemTealColor.CGColor;
         self.button.titleLabel.font=[UIFont boldSystemFontOfSize:11];[self.button setTitleColor:UIColor.systemTealColor forState:UIControlStateNormal];
         self.button.accessibilityLabel=@"收起或恢复标记";self.button.accessibilityHint=@"拖动按钮；长按后松开可解锁雷达位置，再长按锁定";
