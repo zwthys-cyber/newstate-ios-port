@@ -24,6 +24,7 @@ static UIColor *NSPCardColor(void) {return [UIColor colorWithRed:0.075 green:0.1
 @property(nonatomic,strong) NSMutableDictionary<NSString *,UILabel *> *values;
 @property(nonatomic,strong) NSMutableDictionary<NSString *,UISlider *> *sliders;
 @property(nonatomic,strong) UISegmentedControl *presets;
+@property(nonatomic,strong) UISegmentedControl *positionTarget;
 - (void)save;
 - (void)refresh;
 @end
@@ -220,6 +221,14 @@ static UIColor *NSPCardColor(void) {return [UIColor colorWithRed:0.075 green:0.1
     [self toggleRow:@"floating_button" title:@"悬浮按钮" detail:nil card:radar];[self separator:radar];
     [self sliderRow:@"radar_range" title:@"雷达范围" minimum:50 maximum:500 card:radar];[self separator:radar];
     [self sliderRow:@"radar_size" title:@"雷达大小" minimum:100 maximum:200 card:radar];
+    self.positionTarget=[[UISegmentedControl alloc] initWithItems:@[@"移动按钮",@"移动雷达"]];
+    self.positionTarget.selectedSegmentIndex=0;self.positionTarget.accessibilityLabel=@"位置微调目标";
+    [self.positionTarget.heightAnchor constraintGreaterThanOrEqualToConstant:40].active=YES;[radar addArrangedSubview:self.positionTarget];
+    UIStackView *nudges=[[UIStackView alloc] init];nudges.axis=UILayoutConstraintAxisHorizontal;nudges.distribution=UIStackViewDistributionFillEqually;nudges.spacing=4;
+    NSArray *titles=@[@"左",@"右",@"上",@"下"],*symbols=@[@"arrow.left",@"arrow.right",@"arrow.up",@"arrow.down"];
+    for (NSInteger i=0;i<4;++i) {UIButton *button=[self button:titles[i] symbol:symbols[i] action:@selector(nudgeOverlay:) primary:NO];button.tag=i;[nudges addArrangedSubview:button];}
+    [radar addArrangedSubview:nudges];
+    [radar addArrangedSubview:[self label:@"位置微调不依赖悬浮触摸；每次移动画面宽或高的 5%。" size:11 weight:UIFontWeightRegular color:UIColor.secondaryLabelColor]];
     [radar addArrangedSubview:[self button:@"重置悬浮位置" symbol:@"arrow.counterclockwise" action:@selector(resetOverlayLayout) primary:NO]];
     UIStackView *style=[self card:@"视觉样式" subtitle:@"调节应用到悬浮层；不会改变游戏内画面。"];
     [self sliderRow:@"label_scale" title:@"文字大小" minimum:0.8f maximum:1.3f card:style];[self separator:style];
@@ -253,6 +262,16 @@ static UIColor *NSPCardColor(void) {return [UIColor colorWithRed:0.075 green:0.1
 - (void)save {NSPWriteJSON(@"settings.json",self.settings);}
 - (void)toggle:(UISwitch *)sender {
     self.settings[sender.accessibilityIdentifier]=@(sender.on);self.presets.selectedSegmentIndex=UISegmentedControlNoSegment;[self save];[self refresh];
+}
+- (void)nudgeOverlay:(UIButton *)sender {
+    BOOL radar=self.positionTarget.selectedSegmentIndex==1;
+    NSString *prefix=radar ? @"radar" : @"button",*axis=sender.tag<2 ? @"x" : @"y";
+    NSString *key=[NSString stringWithFormat:@"%@_%@",prefix,axis];
+    NSMutableDictionary *layout=[NSPReadJSON(@"overlay-layout.json") mutableCopy]?:[NSMutableDictionary dictionary];
+    id stored=layout[key];double value=[axis isEqualToString:@"x"] ? (radar ? 0.2 : 0.055) : (radar ? 0.28 : 0.5);
+    if ([stored isKindOfClass:NSNumber.class] && std::isfinite([stored doubleValue])) value=[stored doubleValue];
+    value+=(sender.tag==0 || sender.tag==2) ? -0.05 : 0.05;layout[key]=@(MAX(0,MIN(1,value)));
+    NSPWriteJSON(@"overlay-layout.json",layout);
 }
 - (void)resetOverlayLayout {NSPWriteJSON(@"overlay-layout.json",@{});}
 - (void)orientationChanged:(UISegmentedControl *)sender {self.settings[@"orientation"]=@(sender.selectedSegmentIndex);[self save];}
@@ -410,6 +429,31 @@ static UIColor *NSPCardColor(void) {return [UIColor colorWithRed:0.075 green:0.1
     [widgets handlePoint:CGPointMake(300,250) phase:UITouchPhaseMoved identity:4];
     [widgets handlePoint:CGPointMake(300,250) phase:UITouchPhaseCancelled identity:4];
     check(CGPointEqualToPoint(button,widgets.button.center) && !widgets.collapsed,@"cancelled button drag restores position without toggling markers");
+    widgets.editing=NO;[widgets updateWithOptions:NSPDefaults()];
+    NSPPreviewTouch *touch=[NSPPreviewTouch new];touch.point=widgets.button.center;
+    NSSet<UITouch *> *touches=(NSSet<UITouch *> *)[NSSet setWithObject:touch];
+    CGFloat startX=touch.point.x;
+    [widgets.button touchesBegan:touches withEvent:nil];touch.point=CGPointMake(startX+40,touch.point.y);
+    [widgets.button touchesEnded:touches withEvent:nil];
+    check(fabs(widgets.button.center.x-startX-40)<0.01 && widgets.uiTouches==2 && !widgets.collapsed,
+        @"UIKit responder path moves button even when intermediate move events are absent");
+    button=widgets.button.center;
+    [widgets routePoint:button phase:UITouchPhaseBegan identity:7 source:@"ax"];
+    CGPoint repeated=CGPointMake(button.x+30,button.y+15);
+    [widgets routePoint:repeated phase:UITouchPhaseBegan identity:7 source:@"ax"];
+    [widgets routePoint:repeated phase:UITouchPhaseEnded identity:7 source:@"ax"];
+    check(fabs(widgets.button.center.x-button.x-30)<0.01 && !widgets.collapsed,@"repeated AX down becomes movement rather than resetting or blocking a drag");
+    touch.point=widgets.button.center;[widgets.button touchesBegan:touches withEvent:nil];
+    NSInteger sameID=(NSInteger)((uintptr_t)(__bridge void *)touch & (uintptr_t)NSIntegerMax);
+    [widgets routePoint:touch.point phase:UITouchPhaseEnded identity:sameID source:@"ax"];
+    check(!widgets.collapsed,@"AX cannot finish or hijack a UIKit-owned gesture with the same identity");
+    [widgets.button touchesEnded:touches withEvent:nil];check(widgets.collapsed,@"one physical control source activates the button only once");
+    [NSFileManager.defaultManager removeItemAtPath:NSPPath(@"overlay-layout.json") error:nil];
+    self.pages.selectedSegmentIndex=1;[self renderPage];UIButton *nudge=[UIButton new];nudge.tag=1;[self nudgeOverlay:nudge];
+    self.positionTarget.selectedSegmentIndex=1;nudge.tag=3;[self nudgeOverlay:nudge];
+    NSDictionary *layout=NSPReadJSON(@"overlay-layout.json");
+    check(fabs([layout[@"button_x"] doubleValue]-0.105)<0.0001 && fabs([layout[@"radar_y"] doubleValue]-0.33)<0.0001,
+        @"controller position nudges move button and radar independently without overlay touch access");
     [NSFileManager.defaultManager removeItemAtPath:NSPPath(@"overlay-layout.json") error:nil];
     self.settings=[original mutableCopy];[self save];
     for (NSString *name in @[@"status.json",@"launch.json",@"memory-check.json",@"memory-check-launch.json"])

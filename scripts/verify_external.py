@@ -28,7 +28,10 @@ assert ent['com.apple.private.security.no-container'] is True
 assert not ent.get('com.apple.system-task-ports.read')
 assert hud_ent['com.apple.system-task-ports.read'] is True
 assert hud_ent['com.apple.springboard.accessibility-window-hosting'] is True
-assert hud_ent['com.apple.private.hid.client.event-monitor'] is True
+for hid_key in ('com.apple.private.hid.client.event-monitor','com.apple.private.hid.client.event-dispatch',
+                'com.apple.private.hid.client.event-filter','com.apple.private.hid.client.service-protected','com.apple.private.hid.manager.client'):
+    assert hud_ent[hid_key] is True
+    assert not ent.get(hid_key) and not probe_ent.get(hid_key)
 assert not ent.get('com.apple.private.hid.client.event-monitor')
 assert not probe_ent.get('com.apple.private.hid.client.event-monitor')
 assert hud_ent['com.apple.private.security.no-container'] is True
@@ -55,7 +58,7 @@ with zipfile.ZipFile('out/NSPExternal.ipa') as z:
     prefix='Payload/NSPExternal.app/'
     info=plistlib.loads(z.read(prefix+'Info.plist'))
     assert info['CFBundleIdentifier']=='org.newstateport.External' and info['MinimumOSVersion']=='17.0'
-    assert info['CFBundleShortVersionString']=='0.3.4' and info['CFBundleDisplayName']=='NSP Pro'
+    assert info['CFBundleShortVersionString']=='0.3.5' and info['CFBundleDisplayName']=='NSP Pro'
     assert info['CFBundleIcons']['CFBundlePrimaryIcon']['CFBundleIconName']=='AppIcon'
     assert prefix+'Assets.car' in z.namelist()
     # actool stores the 3x rendition in Assets.car; its standalone fallback is 2x.

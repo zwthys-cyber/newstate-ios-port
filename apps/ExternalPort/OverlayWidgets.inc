@@ -1,5 +1,8 @@
 // Own overlay controls only. OS touch observation follows TrollSpeed's AX bridge (MIT).
 static BOOL NSPTouchBridgeConfigured=NO;
+static BOOL NSPEventLoopPrepared=NO;
+static std::atomic<uint64_t> NSPHIDEvents{0},NSPAXDecoded{0},NSPAXFailures{0};
+static void NSPRouteUIKitTouches(UIView *view,NSSet<UITouch *> *touches,UITouchPhase phase);
 static CGPoint NSPBoundCenter(CGPoint p,CGSize size,CGSize bounds) {
     CGFloat mx=MIN(bounds.width/2,size.width/2+12),my=MIN(bounds.height/2,size.height/2+12);
     return CGPointMake(MAX(mx,MIN(bounds.width-mx,p.x)),MAX(my,MIN(bounds.height-my,p.y)));
@@ -10,6 +13,10 @@ static CGPoint NSPBoundCenter(CGPoint p,CGSize size,CGSize bounds) {
 @property(nonatomic) BOOL editing;
 @end
 @implementation NSPRadarView
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {(void)event;NSPRouteUIKitTouches(self,touches,UITouchPhaseBegan);}
+- (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {(void)event;NSPRouteUIKitTouches(self,touches,UITouchPhaseMoved);}
+- (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {(void)event;NSPRouteUIKitTouches(self,touches,UITouchPhaseEnded);}
+- (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {(void)event;NSPRouteUIKitTouches(self,touches,UITouchPhaseCancelled);}
 - (void)drawRect:(CGRect)rect {
     (void)rect;CGContextRef c=UIGraphicsGetCurrentContext();if (!c) return;
     CGFloat w=self.bounds.size.width,h=self.bounds.size.height,r=MIN(w,h)/2-18;
@@ -44,12 +51,17 @@ static CGPoint NSPBoundCenter(CGPoint p,CGSize size,CGSize bounds) {
 @property(nonatomic,copy) void (^activate)(void);
 @end
 @implementation NSPFloatButton
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {(void)event;NSPRouteUIKitTouches(self,touches,UITouchPhaseBegan);}
+- (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {(void)event;NSPRouteUIKitTouches(self,touches,UITouchPhaseMoved);}
+- (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {(void)event;NSPRouteUIKitTouches(self,touches,UITouchPhaseEnded);}
+- (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {(void)event;NSPRouteUIKitTouches(self,touches,UITouchPhaseCancelled);}
 - (BOOL)accessibilityActivate {if (self.activate) self.activate();return YES;}
 @end
 @interface NSPWidgetLayer : UIView {
     NSInteger _activeIdentity,_activeTarget;
+    NSString *_activeSource;
     CGPoint _touchStart,_centerStart;
-    NSTimeInterval _touchTime,_layoutRead;
+    NSTimeInterval _touchTime,_lastTouchEvent,_layoutRead;
     BOOL _moved;
 }
 @property(nonatomic,weak) NSPCanvas *canvas;
@@ -60,10 +72,13 @@ static CGPoint NSPBoundCenter(CGPoint p,CGSize size,CGSize bounds) {
 @property(nonatomic) BOOL collapsed;
 @property(nonatomic) BOOL editing;
 @property(nonatomic) NSUInteger interactions;
+@property(nonatomic) NSUInteger uiTouches;
+@property(nonatomic) NSUInteger axTouches;
 - (void)updateWithOptions:(NSDictionary *)options;
 - (void)refreshRadar;
 - (void)activateButton;
 - (void)handlePoint:(CGPoint)point phase:(UITouchPhase)phase identity:(NSInteger)identity;
+- (void)routePoint:(CGPoint)point phase:(UITouchPhase)phase identity:(NSInteger)identity source:(NSString *)source;
 @end
 static __weak NSPWidgetLayer *NSPActiveWidgets;
 @implementation NSPWidgetLayer
@@ -97,6 +112,7 @@ static __weak NSPWidgetLayer *NSPActiveWidgets;
 }
 - (void)updateWithOptions:(NSDictionary *)options {
     self.options=options;NSTimeInterval now=NSProcessInfo.processInfo.systemUptime;
+    if (_activeIdentity>=0 && now-_lastTouchEvent>5) {_activeIdentity=-1;_activeTarget=0;_activeSource=nil;}
     if (_activeIdentity<0 && now-_layoutRead>0.25) {self.placement=[NSPReadJSON(@"overlay-layout.json") mutableCopy]?:[NSMutableDictionary dictionary];_layoutRead=now;}
     self.button.hidden=![options[@"floating_button"] boolValue];if (self.button.hidden) {self.editing=NO;self.collapsed=NO;}
     self.canvas.hidden=self.collapsed;self.radar.hidden=self.collapsed || ![options[@"radar"] boolValue];
@@ -110,24 +126,33 @@ static __weak NSPWidgetLayer *NSPActiveWidgets;
     self.collapsed=!self.collapsed;self.editing=NO;++self.interactions;[self updateWithOptions:self.options];
 }
 - (void)handlePoint:(CGPoint)point phase:(UITouchPhase)phase identity:(NSInteger)identity {
+    [self routePoint:point phase:phase identity:identity source:@"test"];
+}
+- (void)routePoint:(CGPoint)point phase:(UITouchPhase)phase identity:(NSInteger)identity source:(NSString *)source {
     if (!std::isfinite(point.x) || !std::isfinite(point.y)) return;
+    if ([source isEqualToString:@"uikit"]) ++self.uiTouches;
+    else if ([source isEqualToString:@"ax"]) ++self.axTouches;
+    if (_activeIdentity>=0 && ![_activeSource isEqualToString:source]) return;
+    if (_activeIdentity==identity && _activeTarget && phase==UITouchPhaseBegan) phase=UITouchPhaseMoved;
+    if (_activeIdentity<0 && phase==UITouchPhaseMoved && [source isEqualToString:@"uikit"]) phase=UITouchPhaseBegan;
     if (phase==UITouchPhaseBegan) {
         if (_activeIdentity>=0 || identity<0) return;
         UIView *hit=[self hitTest:point withEvent:nil];
         NSInteger target=hit==self.button ? 1 : hit==self.radar ? 2 : 0;if (!target) return;
-        _activeIdentity=identity;_activeTarget=target;_touchStart=point;_centerStart=target==1 ? self.button.center : self.radar.center;
-        _touchTime=NSProcessInfo.processInfo.systemUptime;_moved=NO;return;
+        _activeIdentity=identity;_activeSource=[source copy];_activeTarget=target;_touchStart=point;_centerStart=target==1 ? self.button.center : self.radar.center;
+        _touchTime=NSProcessInfo.processInfo.systemUptime;_lastTouchEvent=_touchTime;_moved=NO;return;
     }
     if (_activeIdentity!=identity || !_activeTarget) return;
+    _lastTouchEvent=NSProcessInfo.processInfo.systemUptime;
     UIView *target=_activeTarget==1 ? self.button : self.radar;
     CGFloat dx=point.x-_touchStart.x,dy=point.y-_touchStart.y;
-    if (phase==UITouchPhaseMoved) {
+    if (phase==UITouchPhaseMoved || phase==UITouchPhaseEnded) {
         if (std::hypot(dx,dy)>8) _moved=YES;
         if (_moved) target.center=NSPBoundCenter(CGPointMake(_centerStart.x+dx,_centerStart.y+dy),target.bounds.size,self.bounds.size);
-        return;
+        if (phase==UITouchPhaseMoved) return;
     }
     if (phase!=UITouchPhaseEnded && phase!=UITouchPhaseCancelled) return;
-    NSInteger active=_activeTarget;_activeTarget=0;_activeIdentity=-1;
+    NSInteger active=_activeTarget;_activeTarget=0;_activeIdentity=-1;_activeSource=nil;
     if (phase==UITouchPhaseCancelled) {target.center=_centerStart;return;}
     ++self.interactions;
     if (_moved && self.bounds.size.width>0 && self.bounds.size.height>0) {
@@ -142,6 +167,15 @@ static __weak NSPWidgetLayer *NSPActiveWidgets;
     [self updateWithOptions:self.options];
 }
 @end
+static void NSPRouteUIKitTouches(UIView *view,NSSet<UITouch *> *touches,UITouchPhase phase) {
+    UIView *parent=view.superview;
+    while (parent && ![parent isKindOfClass:NSPWidgetLayer.class]) parent=parent.superview;
+    NSPWidgetLayer *widgets=(NSPWidgetLayer *)parent;if (!widgets) return;
+    for (UITouch *touch in touches) {
+        NSInteger identity=(NSInteger)((uintptr_t)(__bridge void *)touch & (uintptr_t)NSIntegerMax);
+        [widgets routePoint:[touch locationInView:widgets] phase:phase identity:identity source:@"uikit"];
+    }
+}
 // Receive OS AX touch observations; never synthesize touches or control the game.
 @interface NSPAXRepresentation : NSObject
 + (instancetype)representationWithHIDEvent:(CFTypeRef)event hidStreamIdentifier:(NSString *)identifier;
@@ -156,8 +190,8 @@ static __weak NSPWidgetLayer *NSPActiveWidgets;
 @end
 static Class NSPAXClass;
 [[maybe_unused]] static void NSPOverlayTouch(void *target,void *refcon,void *service,CFTypeRef event) {
-    (void)target;(void)refcon;(void)service;
-    @try {
+    (void)target;(void)refcon;(void)service;++NSPHIDEvents;
+    @autoreleasepool { @try {
         NSPAXRepresentation *rep=[NSPAXClass representationWithHIDEvent:event hidStreamIdentifier:@"UIApplicationEvents"];
         NSArray *paths=[[rep handInfo] valueForKey:@"paths"];
         if (![paths isKindOfClass:NSArray.class] || !paths.count) return;
@@ -168,14 +202,22 @@ static Class NSPAXClass;
         else if ([rep isMove]) phase=UITouchPhaseMoved;
         else if ([rep isLift] || [rep isInRange] || [rep isInRangeLift]) phase=UITouchPhaseEnded;
         else return;
-        CGPoint point=[rep location];NSInteger touchID=identity.integerValue;
+        ++NSPAXDecoded;CGPoint point=[rep location];NSInteger touchID=identity.integerValue;
         dispatch_async(dispatch_get_main_queue(),^{
             NSPWidgetLayer *widgets=NSPActiveWidgets;if (!widgets.window) return;
-            [widgets handlePoint:[widgets convertPoint:point fromView:widgets.window] phase:phase identity:touchID];
+            [widgets routePoint:[widgets convertPoint:point fromView:widgets.window] phase:phase identity:touchID source:@"ax"];
         });
-    } @catch (__unused NSException *exception) {}
+    } @catch (__unused NSException *exception) {++NSPAXFailures;} }
 }
 #ifdef NSP_UI_PREVIEW
+// Test double for our responder entry points, not a synthesized system/game touch.
+@interface NSPPreviewTouch : NSObject
+@property(nonatomic) CGPoint point;
+- (CGPoint)locationInView:(UIView *)view;
+@end
+@implementation NSPPreviewTouch
+- (CGPoint)locationInView:(UIView *)view {(void)view;return self.point;}
+@end
 @interface NSPWidgetPreviewController : UIViewController
 @property(nonatomic,strong) NSPWidgetLayer *widgets;
 @property(nonatomic,strong) NSPCanvas *canvas;

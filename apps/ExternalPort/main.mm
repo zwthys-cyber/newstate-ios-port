@@ -13,11 +13,12 @@
 #include <cerrno>
 #include <cstring>
 #include <cmath>
+#include <atomic>
 
 extern char **environ;
 static NSString *NSPFolder;
 static NSString *const NSPStop=@"org.newstateport.external.stop";
-static NSString *const NSPVersion=@"0.3.4";
+static NSString *const NSPVersion=@"0.3.5";
 #ifdef NSP_UI_PREVIEW
 static NSString *const NSPStorage=@"";
 #else
@@ -55,7 +56,9 @@ static NSDictionary *NSPRuntimePermissions(void) {
     if (task && copy) {
         for (NSString *key in @[@"platform-application",@"com.apple.private.persona-mgmt",
             @"com.apple.private.security.no-sandbox",@"com.apple.private.security.no-container",
-            @"com.apple.private.security.container-required",@"com.apple.system-task-ports.read"]) {
+            @"com.apple.private.security.container-required",@"com.apple.system-task-ports.read",
+            @"com.apple.private.hid.client.event-monitor",@"com.apple.private.hid.client.event-filter",
+            @"com.apple.private.hid.manager.client"]) {
             CFErrorRef error=nullptr;
             CFTypeRef value=copy(task,(__bridge CFStringRef)key,&error);
             if (value) {
@@ -278,7 +281,7 @@ static UIColor *NSPCharacterColor(const nsport::Marker &marker) {
 @implementation NSPHUDWindow
 + (BOOL)_isSystemWindow {return YES;}
 - (BOOL)_isWindowServerHostingManaged {return NO;}
-- (BOOL)_ignoresHitTest {return !NSPTouchBridgeConfigured || !self.widgets || self.widgets.button.hidden;}
+- (BOOL)_ignoresHitTest {return !self.widgets || self.widgets.button.hidden;}
 - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
     return [self.widgets hitTest:[self.widgets convertPoint:point fromView:self] withEvent:event];
 }
@@ -442,6 +445,9 @@ static void NSPStopCallback(CFNotificationCenterRef center,void *observer,CFStri
         NSMutableDictionary *report=[extra mutableCopy]?:[NSMutableDictionary dictionary];
         report[@"overlay_hidden"]=@(self.widgets.collapsed);report[@"radar_editing"]=@(self.widgets.editing);
         report[@"overlay_interactions"]=@(self.widgets.interactions);report[@"touch_bridge_configured"]=@(NSPTouchBridgeConfigured);
+        report[@"touch_pipeline"]=@{@"event_loop_prepared":@(NSPEventLoopPrepared),@"hid_events":@(NSPHIDEvents.load()),
+            @"ax_decoded":@(NSPAXDecoded.load()),@"ax_failures":@(NSPAXFailures.load()),
+            @"ax_delivered":@(self.widgets.axTouches),@"uikit_delivered":@(self.widgets.uiTouches)};
         NSPReport(status,report);
     }
 }
@@ -643,6 +649,20 @@ static void NSPStopCallback(CFNotificationCenterRef center,void *observer,CFStri
         (void)NSPScreenBounds();(void)CFRunLoopGetCurrent();gsInit();bksInit();appInit();instantiate(UIApplication.class);
         static NSPHUDDelegate *delegate;delegate=[NSPHUDDelegate new];
         UIApplication *application=UIApplication.sharedApplication;application.delegate=delegate;
+        @try {
+            id dispatcher=[application valueForKey:@"eventDispatcher"];
+            SEL install=NSSelectorFromString(@"_installEventRunLoopSources:");
+            if ([dispatcher respondsToSelector:install]) {
+                NSInvocation *setup=[NSInvocation invocationWithMethodSignature:[dispatcher methodSignatureForSelector:install]];
+                CFRunLoopRef loop=CFRunLoopGetMain();setup.target=dispatcher;setup.selector=install;[setup setArgument:&loop atIndex:2];[setup invoke];
+                id fetcher=[NSClassFromString(@"UIEventFetcher") new];
+                if (fetcher) {
+                    [fetcher setValue:dispatcher forKey:@"eventFetcherSink"];[dispatcher setValue:fetcher forKey:@"eventFetcher"];
+                    [application setValue:fetcher forKey:@"eventFetcher"];NSPEventLoopPrepared=YES;
+                }
+            }
+        } @catch (__unused NSException *exception) {NSPEventLoopPrepared=NO;}
+
         if ([application respondsToSelector:@selector(_accessibilityInit)]) [application _accessibilityInit];
         [[NSBundle bundleWithPath:@"/System/Library/PrivateFrameworks/AccessibilityUtilities.framework"] load];
         NSPAXClass=NSClassFromString(@"AXEventRepresentation");
