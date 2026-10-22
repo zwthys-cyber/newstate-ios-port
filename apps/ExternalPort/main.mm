@@ -93,7 +93,7 @@ static NSDictionary *NSPDefaults(void) {
         @"boxes":@YES,@"lines":@NO,@"health":@YES,@"distances":@YES,@"names":@YES,
         @"crosshair":@YES,@"skeletons":@NO,@"orientation":@0,@"edge_indicators":@NO,@"health_bars":@YES,@"hud_status":@NO,
         @"label_scale":@1.0,@"overlay_opacity":@1.0,@"line_width":@1.2,
-        @"hide_teammates":@YES,@"player_types":@YES};
+        @"hide_teammates":@YES};
 }
 static NSDictionary *NSPSettings(void) {
     NSMutableDictionary *settings=[NSPDefaults() mutableCopy];
@@ -156,11 +156,6 @@ static UIColor *NSPCharacterColor(const nsport::Marker &marker) {
     if (marker.playerKind==nsport::PlayerKind::human) return UIColor.systemRedColor;
     if (marker.playerKind==nsport::PlayerKind::bot) return UIColor.systemYellowColor;
     return UIColor.systemOrangeColor;
-}
-static NSString *NSPPlayerType(const nsport::Marker &marker) {
-    if (marker.relation==nsport::Relation::teammate) return @"队友";
-    NSString *type=marker.playerKind==nsport::PlayerKind::bot ? @"人机" : marker.playerKind==nsport::PlayerKind::human ? @"真人" : @"未知";
-    return marker.relation==nsport::Relation::unknown ? [type stringByAppendingString:@"·队伍未知"] : type;
 }
 
 @interface NSPCanvas : UIView
@@ -250,10 +245,6 @@ static NSString *NSPPlayerType(const nsport::Marker &marker) {
             if (value.length) name=value;
         }
         NSMutableString *label=[name mutableCopy];
-        if (marker.kind==nsport::Kind::character && [o[@"player_types"] boolValue]) {
-            NSString *type=NSPPlayerType(marker);
-            label=[name isEqualToString:@"角色"] ? [type mutableCopy] : [NSMutableString stringWithFormat:@"%@ · %@",type,name];
-        }
         if ([o[@"distances"] boolValue]) [label appendFormat:@" %.0fm",nsport::distance(marker.position,snapshot->camera.position)/100];
         if ([o[@"health"] boolValue] && marker.hasHealth) [label appendFormat:@" %.0f/%.0f",marker.health,marker.maximum];
         [label drawAtPoint:CGPointMake(p.x+5,p.y+3) withAttributes:@{

@@ -204,7 +204,6 @@ static UIColor *NSPCardColor(void) {return [UIColor colorWithRed:0.075 green:0.1
     [self toggleRow:@"vehicles" title:@"载具" detail:nil card:targets];[self separator:targets];
     [self toggleRow:@"items" title:@"物资" detail:@"实验性" card:targets];
     UIStackView *labels=[self card:@"标记信息" subtitle:nil];
-    [self toggleRow:@"player_types" title:@"真人 / 人机标签" detail:@"无法确认时显示未知" card:labels];
     for (NSArray *entry in @[@[@"names",@"姓名"],@[@"distances",@"距离"],@[@"health",@"血量数值"],@[@"health_bars",@"血量条"]]) {
         if (labels.arrangedSubviews.count) [self separator:labels];
         [self toggleRow:entry[0] title:entry[1] detail:nil card:labels];
@@ -262,7 +261,7 @@ static UIColor *NSPCardColor(void) {return [UIColor colorWithRed:0.075 green:0.1
     if (preset<0) return;
     [self.settings addEntriesFromDictionary:@{@"characters":@YES,@"vehicles":@(preset>0),@"items":@NO,
         @"names":@(preset>0),@"distances":@YES,@"health":@(preset==2),@"health_bars":@(preset>0),
-        @"boxes":@YES,@"lines":@(preset==2),@"edge_indicators":@(preset==2),@"crosshair":@YES,@"skeletons":@NO,@"hud_status":@NO,@"hide_teammates":@YES,@"player_types":@YES}];
+        @"boxes":@YES,@"lines":@(preset==2),@"edge_indicators":@(preset==2),@"crosshair":@YES,@"skeletons":@NO,@"hud_status":@NO,@"hide_teammates":@YES}];
     for (NSString *key in self.toggles) [self.toggles[key] setOn:[self.settings[key] boolValue] animated:YES];
     [self save];UIAccessibilityPostNotification(UIAccessibilityAnnouncementNotification,@"显示预设已应用");
 }
@@ -332,12 +331,12 @@ static UIColor *NSPCardColor(void) {return [UIColor colorWithRed:0.075 green:0.1
     };
     NSDictionary *original=[self.settings copy];
     nsport::Marker marker;marker.relation=nsport::Relation::enemy;marker.playerKind=nsport::PlayerKind::human;
-    check([NSPCharacterColor(marker) isEqual:UIColor.systemRedColor] && [NSPPlayerType(marker) isEqualToString:@"真人"],@"human enemy labels and rays use red");
+    check([NSPCharacterColor(marker) isEqual:UIColor.systemRedColor],@"human enemy labels and rays use red");
     marker.playerKind=nsport::PlayerKind::bot;
-    check([NSPCharacterColor(marker) isEqual:UIColor.systemYellowColor] && [NSPPlayerType(marker) isEqualToString:@"人机"],@"bot labels and rays use yellow");
+    check([NSPCharacterColor(marker) isEqual:UIColor.systemYellowColor],@"bot labels and rays use yellow");
     marker.relation=nsport::Relation::unknown;
-    check([NSPCharacterColor(marker) isEqual:UIColor.systemOrangeColor] && [NSPPlayerType(marker) containsString:@"队伍未知"],@"unknown affiliation is not colored as a confirmed enemy");
-    check([self.settings[@"hide_teammates"] boolValue] && [self.settings[@"player_types"] boolValue],@"upgrade defaults enable teammate filtering and type labels");
+    check([NSPCharacterColor(marker) isEqual:UIColor.systemOrangeColor],@"unknown affiliation is not colored as a confirmed enemy");
+    check([self.settings[@"hide_teammates"] boolValue],@"upgrade defaults enable teammate filtering");
     NSPWriteJSON(@"settings.json",@{@"sampling":@YES,@"boxes":NSNull.null,@"orientation":@99,@"label_scale":@9,@"overlay_opacity":@0,@"line_width":@"invalid"});
     NSDictionary *normalized=NSPSettings();
     check([normalized[@"sampling"] boolValue] && [normalized[@"boxes"] boolValue] &&
