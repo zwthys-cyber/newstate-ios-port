@@ -93,6 +93,12 @@ PY
 wait_ui_ready
 capture_ui out/ui-preview/large-text.png
 xcrun simctl terminate "$task_sim_id" org.newstateport.UIPreview
+xcrun simctl ui "$task_sim_id" content_size large
+rm -f "$task_ui_ready"
+xcrun simctl launch "$task_sim_id" org.newstateport.UIPreview --nsp-widgets
+wait_ui_ready
+capture_ui out/ui-preview/widgets.png
+xcrun simctl terminate "$task_sim_id" org.newstateport.UIPreview
 xcrun simctl shutdown "$task_sim_id"
 ditto -c -k --keepParent out/ui-preview out/NSPPro-UI-preview.zip
 rm -r out/ui-preview

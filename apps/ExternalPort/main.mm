@@ -17,7 +17,7 @@
 extern char **environ;
 static NSString *NSPFolder;
 static NSString *const NSPStop=@"org.newstateport.external.stop";
-static NSString *const NSPVersion=@"0.3.3";
+static NSString *const NSPVersion=@"0.3.4";
 #ifdef NSP_UI_PREVIEW
 static NSString *const NSPStorage=@"";
 #else
@@ -93,7 +93,7 @@ static NSDictionary *NSPDefaults(void) {
         @"boxes":@YES,@"lines":@NO,@"health":@YES,@"distances":@YES,@"names":@YES,
         @"crosshair":@YES,@"skeletons":@NO,@"orientation":@0,@"edge_indicators":@NO,@"health_bars":@YES,@"hud_status":@NO,
         @"label_scale":@1.0,@"overlay_opacity":@1.0,@"line_width":@1.2,
-        @"hide_teammates":@YES};
+        @"hide_teammates":@YES,@"radar":@YES,@"floating_button":@YES,@"radar_range":@200,@"radar_size":@140};
 }
 static NSDictionary *NSPSettings(void) {
     NSMutableDictionary *settings=[NSPDefaults() mutableCopy];
@@ -104,6 +104,8 @@ static NSDictionary *NSPSettings(void) {
         if ([key isEqualToString:@"label_scale"]) settings[key]=@(MAX(0.8,MIN(1.3,number)));
         else if ([key isEqualToString:@"overlay_opacity"]) settings[key]=@(MAX(0.35,MIN(1.0,number)));
         else if ([key isEqualToString:@"line_width"]) settings[key]=@(MAX(0.6,MIN(2.0,number)));
+        else if ([key isEqualToString:@"radar_range"]) settings[key]=@(MAX(50,MIN(500,number)));
+        else if ([key isEqualToString:@"radar_size"]) settings[key]=@(MAX(100,MIN(200,number)));
         else if ([key isEqualToString:@"orientation"]) settings[key]=@(MAX(0,MIN(2,[value integerValue])));
         else settings[key]=@([value boolValue]);
     }
@@ -268,13 +270,18 @@ static UIColor *NSPCharacterColor(const nsport::Marker &marker) {
 }
 @end
 
+#include "OverlayWidgets.inc"
+
 @interface NSPHUDWindow : UIWindow
+@property(nonatomic,weak) NSPWidgetLayer *widgets;
 @end
 @implementation NSPHUDWindow
 + (BOOL)_isSystemWindow {return YES;}
 - (BOOL)_isWindowServerHostingManaged {return NO;}
-- (BOOL)_ignoresHitTest {return YES;}
-- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {(void)point;(void)event;return nil;}
+- (BOOL)_ignoresHitTest {return !NSPTouchBridgeConfigured || !self.widgets || self.widgets.button.hidden;}
+- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
+    return [self.widgets hitTest:[self.widgets convertPoint:point fromView:self] withEvent:event];
+}
 @end
 
 @interface NSPHUDDelegate : UIResponder <UIApplicationDelegate> {
@@ -287,6 +294,7 @@ static UIColor *NSPCharacterColor(const nsport::Marker &marker) {
 }
 @property(nonatomic,strong) UIWindow *window;
 @property(nonatomic,strong) NSPCanvas *canvas;
+@property(nonatomic,strong) NSPWidgetLayer *widgets;
 @property(nonatomic,strong) id host;
 @property(nonatomic,strong) NSTimer *timer;
 - (void)stop;
@@ -307,7 +315,9 @@ static void NSPStopCallback(CFNotificationCenterRef center,void *observer,CFStri
     UIViewController *controller=[UIViewController new];controller.view.backgroundColor=UIColor.clearColor;
     self.canvas=[[NSPCanvas alloc] initWithFrame:self.window.bounds];
     self.canvas.backgroundColor=UIColor.clearColor;self.canvas.opaque=NO;self.canvas.userInteractionEnabled=NO;
-    [controller.view addSubview:self.canvas];self.window.rootViewController=controller;
+    self.widgets=[[NSPWidgetLayer alloc] initWithFrame:self.window.bounds];self.widgets.canvas=self.canvas;
+    [self.widgets insertSubview:self.canvas atIndex:0];[controller.view addSubview:self.widgets];
+    ((NSPHUDWindow *)self.window).widgets=self.widgets;NSPActiveWidgets=self.widgets;self.window.rootViewController=controller;
     [self.window makeKeyAndVisible];
     Class cls=NSClassFromString(@"SBSAccessibilityWindowHostingController");
     SEL selector=NSSelectorFromString(@"registerWindowWithContextID:atLevel:");
@@ -335,22 +345,24 @@ static void NSPStopCallback(CFNotificationCenterRef center,void *observer,CFStri
     self.canvas.options=settings;
     self.canvas.alpha=MAX(0.35,MIN(1.0,settings[@"overlay_opacity"] ? [settings[@"overlay_opacity"] doubleValue] : 1.0));
     CGSize screen=self.window.bounds.size;NSInteger orientation=[settings[@"orientation"] integerValue];
-    self.canvas.transform=CGAffineTransformIdentity;
-    self.canvas.bounds=CGRectMake(0,0,orientation==2 ? screen.width : screen.height,orientation==2 ? screen.height : screen.width);
-    self.canvas.center=CGPointMake(screen.width/2,screen.height/2);
-    if (orientation!=2) self.canvas.transform=CGAffineTransformMakeRotation(orientation==1 ? -M_PI_2 : M_PI_2);
+    self.widgets.transform=CGAffineTransformIdentity;
+    self.widgets.bounds=CGRectMake(0,0,orientation==2 ? screen.width : screen.height,orientation==2 ? screen.height : screen.width);
+    self.widgets.center=CGPointMake(screen.width/2,screen.height/2);
+    self.canvas.frame=self.widgets.bounds;
+    if (orientation!=2) self.widgets.transform=CGAffineTransformMakeRotation(orientation==1 ? -M_PI_2 : M_PI_2);
+    [self.widgets updateWithOptions:settings];
     if (![settings[@"sampling"] boolValue]) {
-        self.canvas.snapshot=nullptr;self.canvas.status=@"悬浮层已启动 · 游戏读取关闭";[self.canvas setNeedsDisplay];
+        self.canvas.snapshot=nullptr;self.canvas.status=@"悬浮层已启动 · 游戏读取关闭";[self.canvas setNeedsDisplay];[self.widgets refreshRadar];
         [self report:self.canvas.status extra:@{@"sampling":@NO,@"hosting_call_returned":@YES}];return;
     }
     if (_busy) {
-        if (uptime-_lastFrameReceived>0.25) {self.canvas.snapshot=nullptr;[self.canvas setNeedsDisplay];}
+        if (uptime-_lastFrameReceived>0.25) {self.canvas.snapshot=nullptr;[self.canvas setNeedsDisplay];[self.widgets refreshRadar];}
         return;
     }
     _busy=YES;BOOL skeleton=[settings[@"skeletons"] boolValue];
     nsport::SampleOptions requested;requested.skeletons=skeleton;requested.kinds=0;
     requested.hideTeammates=[settings[@"hide_teammates"] boolValue];
-    if ([settings[@"characters"] boolValue]) requested.kinds|=1;
+    if ([settings[@"characters"] boolValue] || [settings[@"radar"] boolValue]) requested.kinds|=1;
     if ([settings[@"vehicles"] boolValue]) requested.kinds|=2;
     if ([settings[@"items"] boolValue]) requested.kinds|=4;
     if ([settings[@"airdrops"] boolValue]) requested.kinds|=8;
@@ -369,7 +381,7 @@ static void NSPStopCallback(CFNotificationCenterRef center,void *observer,CFStri
                 BOOL expired=self->_lastFrameReceived-start>0.25;
                 self.canvas.snapshot=expired ? nullptr : result.snapshot;
                 self.canvas.status=expired ? @"采样结果已过期，等待更新" : [NSString stringWithUTF8String:result.status.c_str()];
-                [self.canvas setNeedsDisplay];
+                [self.canvas setNeedsDisplay];[self.widgets refreshRadar];
                 NSMutableDictionary *extra=[@{@"sampling":@YES,@"target_pid":@(result.pid),
                     @"read_port_acquired":@(result.readPort),@"read_error":@(result.error),
                     @"hosting_call_returned":@YES} mutableCopy];
@@ -426,7 +438,11 @@ static void NSPStopCallback(CFNotificationCenterRef center,void *observer,CFStri
 - (void)report:(NSString *)status extra:(NSDictionary *)extra {
     NSTimeInterval now=NSDate.date.timeIntervalSince1970;
     if (now-_lastReport>=2 || ![_lastStatus isEqualToString:status]) {
-        _lastReport=now;_lastStatus=[status copy];NSPReport(status,extra);
+        _lastReport=now;_lastStatus=[status copy];
+        NSMutableDictionary *report=[extra mutableCopy]?:[NSMutableDictionary dictionary];
+        report[@"overlay_hidden"]=@(self.widgets.collapsed);report[@"radar_editing"]=@(self.widgets.editing);
+        report[@"overlay_interactions"]=@(self.widgets.interactions);report[@"touch_bridge_configured"]=@(NSPTouchBridgeConfigured);
+        NSPReport(status,report);
     }
 }
 - (void)stop {
@@ -602,6 +618,10 @@ static void NSPStopCallback(CFNotificationCenterRef center,void *observer,CFStri
     self.window=[[UIWindow alloc] initWithFrame:NSPScreenBounds()];
     self.window.overrideUserInterfaceStyle=UIUserInterfaceStyleDark;
     self.window.rootViewController=[[UINavigationController alloc] initWithRootViewController:[NSPControl new]];
+#ifdef NSP_UI_PREVIEW
+    if ([NSProcessInfo.processInfo.arguments containsObject:@"--nsp-widgets"])
+        self.window.rootViewController=[NSPWidgetPreviewController new];
+#endif
     [self.window makeKeyAndVisible];return YES;
 }
 @end
@@ -624,6 +644,14 @@ static void NSPStopCallback(CFNotificationCenterRef center,void *observer,CFStri
         static NSPHUDDelegate *delegate;delegate=[NSPHUDDelegate new];
         UIApplication *application=UIApplication.sharedApplication;application.delegate=delegate;
         if ([application respondsToSelector:@selector(_accessibilityInit)]) [application _accessibilityInit];
+        [[NSBundle bundleWithPath:@"/System/Library/PrivateFrameworks/AccessibilityUtilities.framework"] load];
+        NSPAXClass=NSClassFromString(@"AXEventRepresentation");
+        using TouchCallback=void (*)(void *,void *,void *,CFTypeRef);
+        using RegisterTouch=void *(*)(TouchCallback);
+        auto registerTouch=reinterpret_cast<RegisterTouch>(dlsym(bks,"BKSHIDEventRegisterEventCallback"));
+        if (registerTouch && [NSPAXClass respondsToSelector:@selector(representationWithHIDEvent:hidStreamIdentifier:)]) {
+            registerTouch(NSPOverlayTouch);NSPTouchBridgeConfigured=YES;
+        }
         auto events=reinterpret_cast<Events>(dlsym(gs,"GSEventInitialize"));
         auto mode=reinterpret_cast<Mode>(dlsym(gs,"GSEventPushRunLoopMode"));
         if (events) events(false);if (mode) mode(kCFRunLoopDefaultMode);

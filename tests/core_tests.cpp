@@ -63,6 +63,22 @@ static void projection() {
     assert(!project({100,0,0},camera,0,1000,p));
     assert(near(distance({0,0,0},{3,4,12}),13));
 }
+static void radarProjection() {
+    Camera c{{1000,2000,300},{0,0,0},90};Point p;
+    auto near=[](float a,float b){return std::abs(a-b)<0.0001f;};
+    assert(radarOffset({11000,2000,300},c,200,p) && near(p.x,0) && near(p.y,-0.5f));
+    assert(radarOffset({1000,12000,300},c,200,p) && near(p.x,0.5f) && near(p.y,0));
+    assert(radarOffset({-9000,2000,300},c,200,p) && near(p.y,0.5f));
+    c.rotation.y=90;
+    assert(radarOffset({1000,12000,300},c,200,p) && near(p.x,0) && near(p.y,-0.5f));
+    assert(radarOffset({11000,2000,300},c,200,p) && near(p.x,-0.5f));
+    assert(radarOffset({1000,22000,9000},c,200,p) && near(p.y,-1)); // horizontal range, independent of height
+    assert(!radarOffset({1000,22001,300},c,200,p));
+    assert(radarOffset(c.position,c,200,p) && near(p.x,0) && near(p.y,0));
+    assert(!radarOffset({NAN,0,0},c,200,p));
+    assert(!radarOffset(c.position,c,0,p));assert(!radarOffset(c.position,c,INFINITY,p));
+    c.rotation.y=NAN;assert(!radarOffset(c.position,c,200,p));
+}
 static void healthAndEdgeIndicators() {
     float fraction=42;
     assert(healthFraction(75,100,fraction) && std::abs(fraction-0.75f)<0.0001f);
@@ -306,6 +322,6 @@ static void skeletonReader() {
     f.set(map,std::array<int32_t,3>{2,-1,0});assert(readSkeleton(memory,mesh,{100,200,300}).empty());
 }
 int main() {
-    crypto();projection();healthAndEdgeIndicators();objectLifecycle();inheritanceAndUnreadableMemory();completeReadPipeline();skeletonReader();
-    std::cout<<"PASS: decode; projection/edges; fresh health/team/bot/death state without metadata refresh; unknown classification; zero-HP downed actor; unreadable/dead/destructed removal and respawn; guarded PlayerArray discovery without global traversal; strict 3000m range; independent airdrops/subclasses, toggles, fresh position, destroyed/recycled/range/world removal; fresh motion/camera with cached labels and fewer reads; skeleton transforms/buffers/leader-remap\n";
+    crypto();projection();radarProjection();healthAndEdgeIndicators();objectLifecycle();inheritanceAndUnreadableMemory();completeReadPipeline();skeletonReader();
+    std::cout<<"PASS: decode; projection/edges; heading-up radar/yaw/horizontal range/boundaries/invalid data; fresh health/team/bot/death state without metadata refresh; unknown classification; zero-HP downed actor; unreadable/dead/destructed removal and respawn; guarded PlayerArray discovery without global traversal; strict 3000m range; independent airdrops/subclasses, toggles, fresh position, destroyed/recycled/range/world removal; fresh motion/camera with cached labels and fewer reads; skeleton transforms/buffers/leader-remap\n";
 }

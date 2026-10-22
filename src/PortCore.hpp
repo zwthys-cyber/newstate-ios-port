@@ -27,6 +27,8 @@ uint32_t decodeIndex(const std::array<uint32_t, 3> &words);
 uint32_t decodeSerial(const std::array<uint32_t, 3> &words);
 bool project(Vec3 world, const Camera &camera, float width, float height, Point &out);
 bool offscreenIndicator(Vec3 world,const Camera &camera,float width,float height,float inset,EdgeIndicator &out);
+// Heading-up horizontal radar: result is a unit-disc offset (right, down).
+bool radarOffset(Vec3 world,const Camera &camera,float rangeMeters,Point &out);
 bool healthFraction(float current,float maximum,float &fraction);
 float distance(Vec3 a, Vec3 b);
 bool isA(const Memory &memory, uint64_t objectClass, uint64_t wantedClass);

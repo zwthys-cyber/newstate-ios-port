@@ -215,6 +215,12 @@ static UIColor *NSPCardColor(void) {return [UIColor colorWithRed:0.075 green:0.1
         if (geometry.arrangedSubviews.count) [self separator:geometry];
         [self toggleRow:entry[0] title:entry[1] detail:nil card:geometry];
     }
+    UIStackView *radar=[self card:@"雷达与悬浮按钮" subtitle:@"雷达前方朝上，仅显示范围内已读取到的角色。按钮点击收起/恢复标记，拖动可移动；长按后松开解锁雷达拖动，再长按锁定。"];
+    [self toggleRow:@"radar" title:@"二维雷达" detail:nil card:radar];[self separator:radar];
+    [self toggleRow:@"floating_button" title:@"悬浮按钮" detail:nil card:radar];[self separator:radar];
+    [self sliderRow:@"radar_range" title:@"雷达范围" minimum:50 maximum:500 card:radar];[self separator:radar];
+    [self sliderRow:@"radar_size" title:@"雷达大小" minimum:100 maximum:200 card:radar];
+    [radar addArrangedSubview:[self button:@"重置悬浮位置" symbol:@"arrow.counterclockwise" action:@selector(resetOverlayLayout) primary:NO]];
     UIStackView *style=[self card:@"视觉样式" subtitle:@"调节应用到悬浮层；不会改变游戏内画面。"];
     [self sliderRow:@"label_scale" title:@"文字大小" minimum:0.8f maximum:1.3f card:style];[self separator:style];
     [self sliderRow:@"overlay_opacity" title:@"显示不透明度" minimum:0.35f maximum:1.0f card:style];[self separator:style];
@@ -248,10 +254,13 @@ static UIColor *NSPCardColor(void) {return [UIColor colorWithRed:0.075 green:0.1
 - (void)toggle:(UISwitch *)sender {
     self.settings[sender.accessibilityIdentifier]=@(sender.on);self.presets.selectedSegmentIndex=UISegmentedControlNoSegment;[self save];[self refresh];
 }
+- (void)resetOverlayLayout {NSPWriteJSON(@"overlay-layout.json",@{});}
 - (void)orientationChanged:(UISegmentedControl *)sender {self.settings[@"orientation"]=@(sender.selectedSegmentIndex);[self save];}
 - (void)updateSliderValue:(NSString *)key {
     float value=[self.settings[key] floatValue];
     self.values[key].text=[key isEqualToString:@"overlay_opacity"] ? [NSString stringWithFormat:@"%.0f%%",value*100] :
+        [key isEqualToString:@"radar_range"] ? [NSString stringWithFormat:@"%.0f m",value] :
+        [key isEqualToString:@"radar_size"] ? [NSString stringWithFormat:@"%.0f pt",value] :
         [key isEqualToString:@"line_width"] ? [NSString stringWithFormat:@"%.1f pt",value] : [NSString stringWithFormat:@"%.1f×",value];
 }
 - (void)sliderChanged:(UISlider *)sender {
@@ -378,6 +387,30 @@ static UIColor *NSPCardColor(void) {return [UIColor colorWithRed:0.075 green:0.1
             self.scroll.contentSize.width<=self.scroll.bounds.size.width+1,
             [NSString stringWithFormat:@"page %ld has valid vertical scroll layout",(long)i]);
     }
+    NSPWidgetLayer *widgets=[[NSPWidgetLayer alloc] initWithFrame:CGRectMake(0,0,844,390)];
+    NSPCanvas *testCanvas=[[NSPCanvas alloc] initWithFrame:widgets.bounds];widgets.canvas=testCanvas;
+    [widgets insertSubview:testCanvas atIndex:0];[widgets updateWithOptions:NSPDefaults()];
+    CGPoint button=widgets.button.center,radar=widgets.radar.center;
+    check([widgets hitTest:CGPointMake(700,300) withEvent:nil]==nil && [widgets hitTest:radar withEvent:nil]==nil,
+        @"game area and locked radar pass through touches");
+    check([widgets hitTest:button withEvent:nil]==widgets.button,@"only floating button accepts touches by default");
+    [widgets handlePoint:button phase:UITouchPhaseBegan identity:1];
+    [widgets handlePoint:button phase:UITouchPhaseEnded identity:2];
+    check(!widgets.collapsed,@"another finger cannot activate the captured overlay gesture");
+    [widgets handlePoint:button phase:UITouchPhaseEnded identity:1];
+    check(widgets.collapsed && testCanvas.hidden && widgets.radar.hidden && !widgets.button.hidden,@"collapse hides markers and radar but preserves restore button");
+    [widgets activateButton];widgets.editing=YES;[widgets updateWithOptions:NSPDefaults()];
+    check(!testCanvas.hidden && [widgets hitTest:radar withEvent:nil]==widgets.radar,@"restored overlay permits radar dragging only in edit mode");
+    [widgets handlePoint:radar phase:UITouchPhaseBegan identity:3];
+    [widgets handlePoint:CGPointMake(10000,-10000) phase:UITouchPhaseMoved identity:3];
+    [widgets handlePoint:CGPointMake(10000,-10000) phase:UITouchPhaseEnded identity:3];
+    check(CGRectGetMaxX(widgets.radar.frame)<=844 && CGRectGetMinY(widgets.radar.frame)>=0 &&
+        NSPReadJSON(@"overlay-layout.json")[@"radar_x"]!=nil && !widgets.collapsed,@"radar drag clamps on screen, persists separately and never collapses marks");
+    button=widgets.button.center;[widgets handlePoint:button phase:UITouchPhaseBegan identity:4];
+    [widgets handlePoint:CGPointMake(300,250) phase:UITouchPhaseMoved identity:4];
+    [widgets handlePoint:CGPointMake(300,250) phase:UITouchPhaseCancelled identity:4];
+    check(CGPointEqualToPoint(button,widgets.button.center) && !widgets.collapsed,@"cancelled button drag restores position without toggling markers");
+    [NSFileManager.defaultManager removeItemAtPath:NSPPath(@"overlay-layout.json") error:nil];
     self.settings=[original mutableCopy];[self save];
     for (NSString *name in @[@"status.json",@"launch.json",@"memory-check.json",@"memory-check-launch.json"])
         [NSFileManager.defaultManager removeItemAtPath:NSPPath(name) error:nil];
@@ -387,7 +420,7 @@ static UIColor *NSPCardColor(void) {return [UIColor colorWithRed:0.075 green:0.1
     [NSFileManager.defaultManager removeItemAtPath:NSPPath(@"launch.json") error:nil];[self refresh];
     [NSFileManager.defaultManager removeItemAtPath:NSPPath(@"status.json") error:nil];[self refresh];
     NSPWriteJSON(@"ui-smoke.json",@{@"passed":@(failures.count==0),@"checks":checks,@"failures":failures,
-        @"scope":@"Simulator controller UI only; no game or device permissions tested"});
+        @"scope":@"Simulator UI, overlay geometry and control routing only; no game, system touch bridge or device permissions tested"});
 }
 #endif
 @end

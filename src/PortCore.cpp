@@ -171,6 +171,17 @@ bool project(Vec3 world, const Camera &c, float w, float h, Point &out) {
     out={w*0.5f+dot(right)*focal/depth,h*0.5f-dot(up)*focal/depth};
     return std::isfinite(out.x) && std::isfinite(out.y);
 }
+bool radarOffset(Vec3 world,const Camera &camera,float rangeMeters,Point &out) {
+    out={};
+    if (!finite(world) || !finite(camera.position) || !std::isfinite(camera.rotation.y) ||
+        !std::isfinite(rangeMeters) || rangeMeters<=0 || rangeMeters>3000) return false;
+    float x=(world.x-camera.position.x)/100,y=(world.y-camera.position.y)/100;
+    if (std::hypot(x,y)>rangeMeters) return false;
+    float yaw=camera.rotation.y*pi/180;
+    out={(-std::sin(yaw)*x+std::cos(yaw)*y)/rangeMeters,
+        -(std::cos(yaw)*x+std::sin(yaw)*y)/rangeMeters};
+    return std::isfinite(out.x) && std::isfinite(out.y);
+}
 bool healthFraction(float current,float maximum,float &fraction) {
     fraction=0;
     if (!std::isfinite(current) || !std::isfinite(maximum) || maximum<=0 || maximum>10000 ||

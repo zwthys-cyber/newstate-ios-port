@@ -1,4 +1,4 @@
-HUD bootstrap, window hosting and persona-spawn portions adapted from Lessica/TrollSpeed.
+HUD bootstrap, window hosting, OS AX touch observation and persona-spawn portions adapted from Lessica/TrollSpeed.
 Source: https://github.com/Lessica/TrollSpeed
 Reference revision: a609be260c8261ead36509c3bc4ded8479da9c40
 
