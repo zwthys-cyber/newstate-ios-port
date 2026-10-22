@@ -69,7 +69,7 @@ static __weak NSPWidgetLayer *NSPActiveWidgets;
 @implementation NSPWidgetLayer
 - (instancetype)initWithFrame:(CGRect)frame {
     if ((self=[super initWithFrame:frame])) {
-        self.backgroundColor=UIColor.clearColor;_activeIdentity=-1;self.placement=[NSMutableDictionary dictionary];
+        self.backgroundColor=UIColor.clearColor;self.opaque=NO;_activeIdentity=-1;self.placement=[NSMutableDictionary dictionary];
         self.radar=[NSPRadarView new];self.radar.backgroundColor=UIColor.clearColor;self.radar.opaque=NO;[self addSubview:self.radar];
         self.button=[[NSPFloatButton alloc] initWithFrame:CGRectZero];self.button.backgroundColor=[UIColor colorWithWhite:0.08 alpha:0.9];
         self.button.layer.cornerRadius=22;self.button.layer.borderWidth=1;self.button.layer.borderColor=UIColor.systemTealColor.CGColor;
@@ -98,7 +98,7 @@ static __weak NSPWidgetLayer *NSPActiveWidgets;
 - (void)updateWithOptions:(NSDictionary *)options {
     self.options=options;NSTimeInterval now=NSProcessInfo.processInfo.systemUptime;
     if (_activeIdentity<0 && now-_layoutRead>0.25) {self.placement=[NSPReadJSON(@"overlay-layout.json") mutableCopy]?:[NSMutableDictionary dictionary];_layoutRead=now;}
-    self.button.hidden=![options[@"floating_button"] boolValue];if (self.button.hidden) self.editing=NO;
+    self.button.hidden=![options[@"floating_button"] boolValue];if (self.button.hidden) {self.editing=NO;self.collapsed=NO;}
     self.canvas.hidden=self.collapsed;self.radar.hidden=self.collapsed || ![options[@"radar"] boolValue];
     self.radar.options=options;self.radar.editing=self.editing;
     self.radar.alpha=MAX(0.35,MIN(1,[options[@"overlay_opacity"] doubleValue]));
