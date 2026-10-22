@@ -209,7 +209,7 @@ static UIColor *NSPCardColor(void) {return [UIColor colorWithRed:0.075 green:0.1
         if (labels.arrangedSubviews.count) [self separator:labels];
         [self toggleRow:entry[0] title:entry[1] detail:nil card:labels];
     }
-    UIStackView *geometry=[self card:@"辅助绘制" subtitle:@"连线从屏幕底部指向目标；骨架是身体关节线，当前可能包含多余分支。"];
+    UIStackView *geometry=[self card:@"辅助绘制" subtitle:@"连线从屏幕顶部中央指向目标；骨架是身体关节线，当前可能包含多余分支。"];
     for (NSArray *entry in @[@[@"boxes",@"人物方框"],@[@"lines",@"目标连线"],@[@"edge_indicators",@"屏外方向"],
         @[@"crosshair",@"中心准星"],@[@"skeletons",@"骨架 · 实验性"]]) {
         if (geometry.arrangedSubviews.count) [self separator:geometry];

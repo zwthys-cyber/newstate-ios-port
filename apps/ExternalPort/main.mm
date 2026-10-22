@@ -231,7 +231,7 @@ static NSString *NSPPlayerType(const nsport::Marker &marker) {
             CGContextStrokePath(c);
         }
         if ([o[@"lines"] boolValue]) {
-            CGContextMoveToPoint(c,width/2,height);CGContextAddLineToPoint(c,p.x,p.y);CGContextStrokePath(c);
+            CGContextMoveToPoint(c,width/2,0);CGContextAddLineToPoint(c,p.x,p.y);CGContextStrokePath(c);
         }
         if (marker.kind!=nsport::Kind::character)
             CGContextStrokeEllipseInRect(c,CGRectMake(p.x-3,p.y-3,6,6));
