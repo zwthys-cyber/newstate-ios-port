@@ -57,7 +57,8 @@ static CGPoint NSPBoundCenter(CGPoint p,CGSize size,CGSize bounds) {
 @property(nonatomic,strong) NSPFloatButton *button;
 @property(nonatomic,copy) NSDictionary *options;
 @property(nonatomic,strong) NSMutableDictionary *placement;
-@property(nonatomic) BOOL collapsed,editing;
+@property(nonatomic) BOOL collapsed;
+@property(nonatomic) BOOL editing;
 @property(nonatomic) NSUInteger interactions;
 - (void)updateWithOptions:(NSDictionary *)options;
 - (void)refreshRadar;
@@ -109,6 +110,7 @@ static __weak NSPWidgetLayer *NSPActiveWidgets;
     self.collapsed=!self.collapsed;self.editing=NO;++self.interactions;[self updateWithOptions:self.options];
 }
 - (void)handlePoint:(CGPoint)point phase:(UITouchPhase)phase identity:(NSInteger)identity {
+    if (!std::isfinite(point.x) || !std::isfinite(point.y)) return;
     if (phase==UITouchPhaseBegan) {
         if (_activeIdentity>=0 || identity<0) return;
         UIView *hit=[self hitTest:point withEvent:nil];
@@ -148,6 +150,7 @@ static __weak NSPWidgetLayer *NSPActiveWidgets;
 - (BOOL)isMove;
 - (BOOL)isCancel;
 - (BOOL)isLift;
+- (BOOL)isInRange;
 - (BOOL)isInRangeLift;
 - (id)handInfo;
 @end
@@ -163,7 +166,7 @@ static Class NSPAXClass;
         if ([rep isCancel]) phase=UITouchPhaseCancelled;
         else if ([rep isTouchDown]) phase=UITouchPhaseBegan;
         else if ([rep isMove]) phase=UITouchPhaseMoved;
-        else if ([rep isLift] || [rep isInRangeLift]) phase=UITouchPhaseEnded;
+        else if ([rep isLift] || [rep isInRange] || [rep isInRangeLift]) phase=UITouchPhaseEnded;
         else return;
         CGPoint point=[rep location];NSInteger touchID=identity.integerValue;
         dispatch_async(dispatch_get_main_queue(),^{
