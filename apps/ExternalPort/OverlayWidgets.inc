@@ -167,12 +167,23 @@ static __weak NSPWidgetLayer *NSPActiveWidgets;
     [self updateWithOptions:self.options];
 }
 @end
+static NSInteger NSPUIKitIdentity(UITouch *touch) {
+    static NSMapTable<UITouch *,NSNumber *> *identities;
+    static NSInteger nextIdentity=0;
+    if (!identities) identities=[NSMapTable weakToStrongObjectsMapTable];
+    NSNumber *value=[identities objectForKey:touch];
+    if (!value) {
+        nextIdentity=nextIdentity==NSIntegerMax ? 1 : nextIdentity+1;
+        value=@(nextIdentity);[identities setObject:value forKey:touch];
+    }
+    return value.integerValue;
+}
 static void NSPRouteUIKitTouches(UIView *view,NSSet<UITouch *> *touches,UITouchPhase phase) {
     UIView *parent=view.superview;
     while (parent && ![parent isKindOfClass:NSPWidgetLayer.class]) parent=parent.superview;
     NSPWidgetLayer *widgets=(NSPWidgetLayer *)parent;if (!widgets) return;
     for (UITouch *touch in touches) {
-        NSInteger identity=(NSInteger)((uintptr_t)(__bridge void *)touch & (uintptr_t)NSIntegerMax);
+        NSInteger identity=NSPUIKitIdentity(touch);
         [widgets routePoint:[touch locationInView:widgets] phase:phase identity:identity source:@"uikit"];
     }
 }

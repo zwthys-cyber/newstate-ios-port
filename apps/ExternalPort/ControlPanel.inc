@@ -444,7 +444,7 @@ static UIColor *NSPCardColor(void) {return [UIColor colorWithRed:0.075 green:0.1
     [widgets routePoint:repeated phase:UITouchPhaseEnded identity:7 source:@"ax"];
     check(fabs(widgets.button.center.x-button.x-30)<0.01 && !widgets.collapsed,@"repeated AX down becomes movement rather than resetting or blocking a drag");
     touch.point=widgets.button.center;[widgets.button touchesBegan:touches withEvent:nil];
-    NSInteger sameID=(NSInteger)((uintptr_t)(__bridge void *)touch & (uintptr_t)NSIntegerMax);
+    NSInteger sameID=NSPUIKitIdentity((UITouch *)touch);
     [widgets routePoint:touch.point phase:UITouchPhaseEnded identity:sameID source:@"ax"];
     check(!widgets.collapsed,@"AX cannot finish or hijack a UIKit-owned gesture with the same identity");
     [widgets.button touchesEnded:touches withEvent:nil];check(widgets.collapsed,@"one physical control source activates the button only once");
