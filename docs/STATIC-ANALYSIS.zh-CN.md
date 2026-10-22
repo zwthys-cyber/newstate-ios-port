@@ -71,3 +71,9 @@ SkeletalMeshComponent 构造设置虚表 RVA 0x7c6b8e0。其 +0x490 槽对应 Ge
 - 原生 RVA `0x22d5fbc` 附近等有效性检查读取 UObject +0x20 的三个 uint32，以 key `0xb5c76d21` 及 ROR7 解码后索引 GUObjectArray。快速路径复用相同解码，但只有索引在对象数范围内且表项反查等于目标 actor 才接纳；不以解码值本身当作可信指针。
 
 快速路径每轮最多检查 32 个玩家状态，不阻塞位置更新等待整个全局对象表扫描；全局扫描仍用于缺少 PlayerArray/PawnPrivate 的角色、载具和物资。诊断仅导出本地队伍是否就绪、过滤/分类计数、玩家数组可用性与本轮发现数量，不导出队号、昵称或玩家坐标。上述为静态依据和合成内存测试范围，尚不能声称真机类型判断或实际延迟已验证。
+
+## 0.3.3 空投识别依据
+
+同一 0.9.98（804）UUID 的 `CarePackageItem` 类 getter 为 VA `0x1033e0640`，入口 ADRP/LDR 从 VA `0x107f02930` 取得 UClass 单例，对应运行时主程序 RVA `0x7f02930`。反射注册参数 VA `0x1074c2710` 指向该 getter，属性包含 `Parachute`（+0x440）、`MovementComponent`（+0x450）、`CarePackageOption`（+0x4b0）和 `VisualStaticMesh`（+0x4d0）；这些字段不在本版中读取或用于猜测箱内物品/开箱状态。
+
+新增类别只对 `isA(CarePackageItem)` 成立的实例接纳，包括派生类；`CarePackageController`、`CarePackageParachute`、运输机及 DroppedItem/DroppedItemGroup 不作为识别依据。复用已有对象表 serial/销毁标志、世界归属、根组件位置和相机距离校验，不执行游戏方法、不写内存。新类别拥有独立位掩码、数量限制与显示开关，地面物资关闭不影响空投。静态类型匹配与合成内存测试不等同于真机空投显示已验证，也不证明是否搜空或箱内物资可读。

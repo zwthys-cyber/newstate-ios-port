@@ -17,7 +17,7 @@
 extern char **environ;
 static NSString *NSPFolder;
 static NSString *const NSPStop=@"org.newstateport.external.stop";
-static NSString *const NSPVersion=@"0.3.2";
+static NSString *const NSPVersion=@"0.3.3";
 #ifdef NSP_UI_PREVIEW
 static NSString *const NSPStorage=@"";
 #else
@@ -89,7 +89,7 @@ static void NSPLaunchReport(NSString *phase,NSString *message,int error,pid_t ch
     if (!NSPReadJSON(@"status.json")) NSPWriteJSON(@"status.json",report);
 }
 static NSDictionary *NSPDefaults(void) {
-    return @{@"sampling":@NO,@"characters":@YES,@"vehicles":@YES,@"items":@NO,
+    return @{@"sampling":@NO,@"characters":@YES,@"vehicles":@YES,@"items":@NO,@"airdrops":@YES,
         @"boxes":@YES,@"lines":@NO,@"health":@YES,@"distances":@YES,@"names":@YES,
         @"crosshair":@YES,@"skeletons":@NO,@"orientation":@0,@"edge_indicators":@NO,@"health_bars":@YES,@"hud_status":@NO,
         @"label_scale":@1.0,@"overlay_opacity":@1.0,@"line_width":@1.2,
@@ -192,8 +192,10 @@ static UIColor *NSPCharacterColor(const nsport::Marker &marker) {
         if (marker.kind==nsport::Kind::character && marker.relation==nsport::Relation::teammate && [o[@"hide_teammates"] boolValue]) continue;
         if (marker.kind==nsport::Kind::vehicle && ![o[@"vehicles"] boolValue]) continue;
         if (marker.kind==nsport::Kind::item && ![o[@"items"] boolValue]) continue;
+        if (marker.kind==nsport::Kind::airdrop && ![o[@"airdrops"] boolValue]) continue;
         UIColor *color=marker.kind==nsport::Kind::character ? NSPCharacterColor(marker) :
-            marker.kind==nsport::Kind::vehicle ? UIColor.systemCyanColor : UIColor.systemGreenColor;
+            marker.kind==nsport::Kind::vehicle ? UIColor.systemCyanColor :
+            marker.kind==nsport::Kind::airdrop ? UIColor.systemPurpleColor : UIColor.systemGreenColor;
         nsport::Point p;
         if (!nsport::project(marker.position,snapshot->camera,(float)width,(float)height,p) ||
             p.x<0 || p.x>width || p.y<0 || p.y>height) {
@@ -228,7 +230,11 @@ static UIColor *NSPCharacterColor(const nsport::Marker &marker) {
         if ([o[@"lines"] boolValue]) {
             CGContextMoveToPoint(c,width/2,0);CGContextAddLineToPoint(c,p.x,p.y);CGContextStrokePath(c);
         }
-        if (marker.kind!=nsport::Kind::character)
+        if (marker.kind==nsport::Kind::airdrop) {
+            CGContextStrokeRect(c,CGRectMake(p.x-5,p.y-5,10,10));
+            CGContextMoveToPoint(c,p.x-5,p.y);CGContextAddLineToPoint(c,p.x+5,p.y);
+            CGContextMoveToPoint(c,p.x,p.y-5);CGContextAddLineToPoint(c,p.x,p.y+5);CGContextStrokePath(c);
+        } else if (marker.kind!=nsport::Kind::character)
             CGContextStrokeEllipseInRect(c,CGRectMake(p.x-3,p.y-3,6,6));
         if ([o[@"boxes"] boolValue] && marker.kind==nsport::Kind::character && marker.halfHeight>0) {
             nsport::Vec3 head=marker.position,feet=marker.position;head.z+=marker.halfHeight;feet.z-=marker.halfHeight;
@@ -239,7 +245,7 @@ static UIColor *NSPCharacterColor(const nsport::Marker &marker) {
                 if (h>2 && h<height*2) CGContextStrokeRect(c,CGRectMake((top.x+bottom.x)/2-w/2,MIN(top.y,bottom.y),w,h));
             }
         }
-        NSString *name=marker.kind==nsport::Kind::character ? @"角色" : marker.kind==nsport::Kind::vehicle ? @"载具" : @"物资";
+        NSString *name=marker.kind==nsport::Kind::character ? @"角色" : marker.kind==nsport::Kind::vehicle ? @"载具" : marker.kind==nsport::Kind::airdrop ? @"空投" : @"物资";
         if ([o[@"names"] boolValue] && !marker.playerName.empty()) {
             NSString *value=[[NSString alloc] initWithCharacters:(const unichar *)marker.playerName.data() length:marker.playerName.size()];
             if (value.length) name=value;
@@ -347,6 +353,7 @@ static void NSPStopCallback(CFNotificationCenterRef center,void *observer,CFStri
     if ([settings[@"characters"] boolValue]) requested.kinds|=1;
     if ([settings[@"vehicles"] boolValue]) requested.kinds|=2;
     if ([settings[@"items"] boolValue]) requested.kinds|=4;
+    if ([settings[@"airdrops"] boolValue]) requested.kinds|=8;
     dispatch_async(_queue,^{
         @autoreleasepool {
             nsport::RemoteResult result;
@@ -392,7 +399,7 @@ static void NSPStopCallback(CFNotificationCenterRef center,void *observer,CFStri
                         @"players_checked":@(result.snapshot->playersChecked),@"players_discovered":@(result.snapshot->playersDiscovered)};
                     extra[@"camera_ready"]=@(result.snapshot->cameraReady && !expired);extra[@"markers"]=@(expired ? 0 : result.snapshot->markers.size());
                     extra[@"scanned"]=@(result.snapshot->scanned);extra[@"objects"]=@(result.snapshot->total);
-                    size_t characters=0,vehicles=0,items=0,health=0,skeletons=0,bones=0,humans=0,bots=0,unknown=0;
+                    size_t characters=0,vehicles=0,items=0,airdrops=0,health=0,skeletons=0,bones=0,humans=0,bots=0,unknown=0;
                     for (const auto &marker:result.snapshot->markers) {
                         if (expired) break;
                         if (marker.kind==nsport::Kind::character) {
@@ -404,8 +411,9 @@ static void NSPStopCallback(CFNotificationCenterRef center,void *observer,CFStri
                             bones+=marker.bones.size();
                         } else if (marker.kind==nsport::Kind::vehicle) ++vehicles;
                         else if (marker.kind==nsport::Kind::item) ++items;
+                        else if (marker.kind==nsport::Kind::airdrop) ++airdrops;
                     }
-                    extra[@"marker_counts"]=@{@"characters":@(characters),@"vehicles":@(vehicles),@"items":@(items),
+                    extra[@"marker_counts"]=@{@"characters":@(characters),@"vehicles":@(vehicles),@"items":@(items),@"airdrops":@(airdrops),
                         @"health_readable":@(health),@"skeletons_readable":@(skeletons),@"bone_segments":@(bones),
                         @"humans":@(humans),@"bots":@(bots),@"unknown":@(unknown)};
                     extra[@"skeleton_sampling_enabled"]=@(skeleton);

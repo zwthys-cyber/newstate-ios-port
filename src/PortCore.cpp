@@ -211,8 +211,8 @@ int Sampler::classify(uint64_t cl) {
     if (found!=classKinds.end()) return found->second;
     int kind=0;
     // Recovered native UClass singleton locations, relative to the executable image.
-    for (const auto &entry : std::array<std::pair<uint64_t,int>,7>{{
-        {0x7f2c5b0,1},{0x7f8b4a0,2},{0x7f33a70,2},{0x7f33b00,2},
+    for (const auto &entry : std::array<std::pair<uint64_t,int>,8>{{
+        {0x7f02930,4},{0x7f2c5b0,1},{0x7f8b4a0,2},{0x7f33a70,2},{0x7f33b00,2},
         {0x7f195c8,2},{0x7f06a00,3},{0x7f06b30,3}}}) {
         uint64_t wanted=memory.pointer(memory.base+entry.first);
         if (wanted && isA(memory,cl,wanted)) { kind=entry.second; break; }
@@ -245,7 +245,7 @@ void Sampler::admit(Snapshot &out,const SampleOptions &options,uint64_t object,u
     }
     Vec3 location;if (!position(object,location)) return;
     float range=distance(location,out.camera.position);if (range>=300000) return;
-    size_t limit=category==Kind::vehicle ? 128 : 256;
+    size_t limit=category==Kind::airdrop ? 64 : category==Kind::vehicle ? 128 : 256;
     size_t count=size_t(std::count_if(candidates.begin(),candidates.end(),[&](const Candidate &c){return c.kind==category;}));
     Candidate incoming{object,item,serial,category,range,{},false};
     if (count<limit) candidates.push_back(incoming);

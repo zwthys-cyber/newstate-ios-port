@@ -202,6 +202,7 @@ static UIColor *NSPCardColor(void) {return [UIColor colorWithRed:0.075 green:0.1
     [self toggleRow:@"characters" title:@"角色" detail:nil card:targets];[self separator:targets];
     [self toggleRow:@"hide_teammates" title:@"隐藏队友" detail:@"确认同队后隐藏全部标记" card:targets];[self separator:targets];
     [self toggleRow:@"vehicles" title:@"载具" detail:nil card:targets];[self separator:targets];
+    [self toggleRow:@"airdrops" title:@"空投" detail:@"紫色标记，独立于地面物资" card:targets];[self separator:targets];
     [self toggleRow:@"items" title:@"物资" detail:@"实验性" card:targets];
     UIStackView *labels=[self card:@"标记信息" subtitle:nil];
     for (NSArray *entry in @[@[@"names",@"姓名"],@[@"distances",@"距离"],@[@"health",@"血量数值"],@[@"health_bars",@"血量条"]]) {
@@ -259,7 +260,7 @@ static UIColor *NSPCardColor(void) {return [UIColor colorWithRed:0.075 green:0.1
 - (void)presetChanged:(UISegmentedControl *)sender {
     NSInteger preset=sender.selectedSegmentIndex;
     if (preset<0) return;
-    [self.settings addEntriesFromDictionary:@{@"characters":@YES,@"vehicles":@(preset>0),@"items":@NO,
+    [self.settings addEntriesFromDictionary:@{@"characters":@YES,@"vehicles":@(preset>0),@"items":@NO,@"airdrops":@(preset>0),
         @"names":@(preset>0),@"distances":@YES,@"health":@(preset==2),@"health_bars":@(preset>0),
         @"boxes":@YES,@"lines":@(preset==2),@"edge_indicators":@(preset==2),@"crosshair":@YES,@"skeletons":@NO,@"hud_status":@NO,@"hide_teammates":@YES}];
     for (NSString *key in self.toggles) [self.toggles[key] setOn:[self.settings[key] boolValue] animated:YES];
@@ -287,8 +288,8 @@ static UIColor *NSPCardColor(void) {return [UIColor colorWithRed:0.075 green:0.1
     else self.statusDetail.text=@"点击启动后，返回游戏使用所选显示功能。";
     NSDictionary *counts=report[@"marker_counts"],*performance=report[@"performance"];
     if (running && [report[@"sampling"] boolValue]) {
-        self.metrics.text=[NSString stringWithFormat:@"真人 %@ · 人机 %@ · 未知 %@\n载具 %@ · 隐藏队友 %@ · 移除死亡 %@\n最近采样 %.1f ms / 调度目标 60 Hz",
-            counts[@"humans"]?:@0,counts[@"bots"]?:@0,counts[@"unknown"]?:@0,counts[@"vehicles"]?:@0,
+        self.metrics.text=[NSString stringWithFormat:@"真人 %@ · 人机 %@ · 未知 %@\n载具 %@ · 空投 %@\n隐藏队友 %@ · 移除死亡 %@\n最近采样 %.1f ms / 调度目标 60 Hz",
+            counts[@"humans"]?:@0,counts[@"bots"]?:@0,counts[@"unknown"]?:@0,counts[@"vehicles"]?:@0,counts[@"airdrops"]?:@0,
             report[@"affiliation"][@"teammates_hidden"]?:@0,report[@"affiliation"][@"dead_hidden"]?:@0,[performance[@"read_ms"] doubleValue]];
     } else self.metrics.text=@"";
     self.startButton.enabled=!self.startingHUD;
@@ -343,6 +344,7 @@ static UIColor *NSPCardColor(void) {return [UIColor colorWithRed:0.075 green:0.1
         [normalized[@"orientation"] intValue]==2 && [normalized[@"label_scale"] doubleValue]==1.3 &&
         [normalized[@"overlay_opacity"] doubleValue]==0.35 && [normalized[@"line_width"] doubleValue]==1.2,
         @"settings migration, invalid types and style bounds");
+    check([normalized[@"airdrops"] boolValue] && ![normalized[@"items"] boolValue],@"upgrade enables airdrops independently of ground loot");
     self.settings=[original mutableCopy];self.settings[@"sampling"]=@YES;self.settings[@"orientation"]=@1;
     self.pages.selectedSegmentIndex=1;[self renderPage];
     for (NSInteger i=0;i<3;++i) {
@@ -351,6 +353,8 @@ static UIColor *NSPCardColor(void) {return [UIColor colorWithRed:0.075 green:0.1
             ![self.settings[@"skeletons"] boolValue] && ![self.settings[@"hud_status"] boolValue],
             [NSString stringWithFormat:@"preset %ld preserves reading and orientation, keeps bones/status off",(long)i]);
     }
+    UISwitch *dropToggle=self.toggles[@"airdrops"];dropToggle.on=NO;[self toggle:dropToggle];
+    check(![NSPSettings()[@"airdrops"] boolValue] && ![NSPSettings()[@"items"] boolValue],@"airdrop toggle persists independently of ground loot");
     UISwitch *toggle=self.toggles[@"names"];toggle.on=NO;[self toggle:toggle];
     check(![NSPSettings()[@"names"] boolValue] && self.presets.selectedSegmentIndex==UISegmentedControlNoSegment,@"manual switch persists and clears preset selection");
     UISlider *slider=self.sliders[@"overlay_opacity"];slider.value=0.5;[self sliderChanged:slider];

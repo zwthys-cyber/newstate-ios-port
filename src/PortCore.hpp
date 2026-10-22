@@ -33,7 +33,7 @@ bool isA(const Memory &memory, uint64_t objectClass, uint64_t wantedClass);
 uint64_t resolveWeak(const Memory &memory, uint64_t address);
 std::vector<BoneLine> readSkeleton(const Memory &memory,uint64_t mesh,Vec3 reference);
 
-enum class Kind { character = 1, vehicle = 2, item = 3 };
+enum class Kind { character = 1, vehicle = 2, item = 3, airdrop = 4 };
 enum class PlayerKind { unknown, human, bot };
 enum class Relation { unknown, teammate, enemy };
 struct Marker {
@@ -61,7 +61,7 @@ struct SampleOptions {
     bool skeletons{},details{true},hideTeammates{true};
     uint32_t discoveryBudget{2048};
     uint32_t playerDiscoveryBudget{32};
-    uint8_t kinds{7}; // character=1, vehicle=2, item=4
+    uint8_t kinds{7}; // character=1, vehicle=2, item=4; airdrop=8 is explicitly enabled by the external UI
 };
 
 // Memory observations only: no engine function calls, code hooks or writes.

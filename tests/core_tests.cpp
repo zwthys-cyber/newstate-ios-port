@@ -236,6 +236,36 @@ static void completeReadPipeline() {
     size_t characters=0,items=0;
     for (const auto &marker:out.markers) {if (marker.kind==Kind::character) ++characters;else if (marker.kind==Kind::item) ++items;}
     assert(characters==1 && items==256);
+    // Airdrops are a separate category, including Blueprint subclasses, not ordinary loot.
+    constexpr uint64_t dropClass=0x400030000,dropChildClass=0x400031000,dropChain=0x400032000;
+    constexpr uint64_t dropRoot=0x300120000;
+    for (uint64_t a:{dropClass,dropChildClass,dropChain}) f.allocate(a,0x100);
+    f.allocate(dropRoot,0x400);f.set(dropRoot+0x150,Vec3{2000,100,0});
+    f.allocate(base+0x7f02930,8);f.set(base+0x7f02930,dropClass);
+    f.set(dropChildClass+0x60,int32_t(1));f.set(dropChildClass+0x58,dropChain);f.set(dropChain,dropClass+0x58);
+    f.set(base+0x8174538,int32_t(604));
+    for (uint64_t i=602;i<604;++i) {
+        uint64_t drop=0x700000000+i*0x1000;f.allocate(drop,0x600);
+        f.set(drop+0x30,encoded(i==602 ? dropClass : dropChildClass));
+        f.set(drop+8,encoded(level));f.set(drop+0x278,dropRoot);
+        f.set(chunk+i*24+8,drop);f.set(chunk+i*24+16,uint32_t(0));f.set(chunk+i*24+20,int32_t(i));
+    }
+    SampleOptions dropsOnly;dropsOnly.kinds=8;Sampler drops(memory);out=drops.sample(dropsOnly);
+    assert(out.markers.size()==2);
+    for (const auto &marker:out.markers) assert(marker.kind==Kind::airdrop && !marker.hasHealth);
+    dropsOnly.kinds=4;out=drops.sample(dropsOnly);assert(out.markers.size()==256);
+    for (const auto &marker:out.markers) assert(marker.kind==Kind::item);
+    dropsOnly.kinds=8;dropsOnly.details=false;dropsOnly.discoveryBudget=0;
+    f.set(dropRoot+0x150,Vec3{2500,100,0});out=drops.sample(dropsOnly);
+    assert(out.markers.size()==2 && out.markers[0].position.x==2500);
+    f.set(chunk+602*24+16,uint32_t(0x20000000));out=drops.sample(dropsOnly);
+    assert(out.markers.size()==1 && out.markers[0].object==0x700000000+603*0x1000);
+    f.set(chunk+603*24+20,int32_t(999));out=drops.sample(dropsOnly);assert(out.markers.empty());
+    f.set(chunk+602*24+16,uint32_t(0));f.set(chunk+603*24+20,int32_t(603));
+    dropsOnly.discoveryBudget=2048;f.set(dropRoot+0x150,Vec3{300000,0,0});
+    Sampler farDrops(memory);out=farDrops.sample(dropsOnly);assert(out.markers.empty());
+    f.set(dropRoot+0x150,Vec3{2000,100,0});f.set(level+0x178,uint64_t(world+0x8000));
+    Sampler otherWorldDrops(memory);out=otherWorldDrops.sample(dropsOnly);assert(out.markers.empty());
 }
 static void skeletonReader() {
     struct Transform {float q[4];Vec3 translation,scale;float padding[2];};
@@ -277,5 +307,5 @@ static void skeletonReader() {
 }
 int main() {
     crypto();projection();healthAndEdgeIndicators();objectLifecycle();inheritanceAndUnreadableMemory();completeReadPipeline();skeletonReader();
-    std::cout<<"PASS: decode; projection/edges; fresh health/team/bot/death state without metadata refresh; unknown classification; zero-HP downed actor; unreadable/dead/destructed removal and respawn; guarded PlayerArray discovery without global traversal; strict 3000m range; fresh motion/camera with cached labels and fewer reads; skeleton transforms/buffers/leader-remap\n";
+    std::cout<<"PASS: decode; projection/edges; fresh health/team/bot/death state without metadata refresh; unknown classification; zero-HP downed actor; unreadable/dead/destructed removal and respawn; guarded PlayerArray discovery without global traversal; strict 3000m range; independent airdrops/subclasses, toggles, fresh position, destroyed/recycled/range/world removal; fresh motion/camera with cached labels and fewer reads; skeleton transforms/buffers/leader-remap\n";
 }
