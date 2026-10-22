@@ -28,6 +28,9 @@ assert ent['com.apple.private.security.no-container'] is True
 assert not ent.get('com.apple.system-task-ports.read')
 assert hud_ent['com.apple.system-task-ports.read'] is True
 assert hud_ent['com.apple.springboard.accessibility-window-hosting'] is True
+assert hud_ent['com.apple.private.hid.client.event-monitor'] is True
+assert not ent.get('com.apple.private.hid.client.event-monitor')
+assert not probe_ent.get('com.apple.private.hid.client.event-monitor')
 assert hud_ent['com.apple.private.security.no-container'] is True
 assert hud_ent['com.apple.private.security.container-required'] is False
 assert not hud_ent.get('com.apple.private.persona-mgmt')
