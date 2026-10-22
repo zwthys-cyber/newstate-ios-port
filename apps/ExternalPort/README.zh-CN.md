@@ -1,6 +1,10 @@
-# NSP Pro 0.3.1
+# NSP Pro 0.3.2
 
 独立外置显示工具，面向 iPhone 15 Pro Max / iOS 17.0 / TrollStore，适配 NEW STATE 0.9.98（804）。沿用已有只读采样和跨应用悬浮层，重新设计控制界面。安装包名保持 `NSPExternal.ipa`，Bundle ID 保持 `org.newstateport.External`，覆盖升级保留原有设置。
+
+## 0.3.2 显示调整
+
+去除人物方框内、射线终点的 6 像素小圆圈。人物方框、射线、信息和血量条沿用原设置；载具/物资的位置圆点继续保留。
 
 ## 0.3.1 修复
 

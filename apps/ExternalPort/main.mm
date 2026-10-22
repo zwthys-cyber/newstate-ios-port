@@ -17,7 +17,7 @@
 extern char **environ;
 static NSString *NSPFolder;
 static NSString *const NSPStop=@"org.newstateport.external.stop";
-static NSString *const NSPVersion=@"0.3.1";
+static NSString *const NSPVersion=@"0.3.2";
 #ifdef NSP_UI_PREVIEW
 static NSString *const NSPStorage=@"";
 #else
@@ -233,7 +233,8 @@ static NSString *NSPPlayerType(const nsport::Marker &marker) {
         if ([o[@"lines"] boolValue]) {
             CGContextMoveToPoint(c,width/2,height);CGContextAddLineToPoint(c,p.x,p.y);CGContextStrokePath(c);
         }
-        CGContextStrokeEllipseInRect(c,CGRectMake(p.x-3,p.y-3,6,6));
+        if (marker.kind!=nsport::Kind::character)
+            CGContextStrokeEllipseInRect(c,CGRectMake(p.x-3,p.y-3,6,6));
         if ([o[@"boxes"] boolValue] && marker.kind==nsport::Kind::character && marker.halfHeight>0) {
             nsport::Vec3 head=marker.position,feet=marker.position;head.z+=marker.halfHeight;feet.z-=marker.halfHeight;
             nsport::Point top,bottom;
